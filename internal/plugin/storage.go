@@ -97,23 +97,18 @@ func (p *Plugin) commandEnable(args []string, stdout, stderr io.Writer) error {
 	if err := p.State.Setup(); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(rendered, 0755); err != nil {
-		return err
-	}
-	if err := os.Chmod(rendered, 0755); err != nil {
-		return err
-	}
-	if err := chownToSystemUser(rendered); err != nil {
+	initialGeneration, err := ensureGenerationStorage(rendered)
+	if err != nil {
 		return err
 	}
 	config := AppConfig{
 		AppName: app, Enabled: true, MountPath: mountPath, RoleName: roleName,
-		AppRoleMount: approleMount, StorageEntry: entry, TemplateMode: DefaultTemplateMode,
+		AppRoleMount: approleMount, StorageEntry: entry, TemplateMode: DefaultTemplateMode, ActiveGeneration: initialGeneration,
 	}
 	dokku := executableFromEnv("DOKKU_BIN", "dokku")
 	create := CommandSpec{Name: dokku, Args: []string{"storage:create", entry, rendered, "--scheduler", "docker-local", "--reclaim-policy", "Retain"}, Env: env, Stdout: stdout, Stderr: stderr}
 	if err := p.Runner.Run(create); err != nil {
-		removeErr := os.RemoveAll(rendered)
+		removeErr := removeRenderedStorage(rendered)
 		return errors.Join(fmt.Errorf("create Dokku storage: %w", err), removeErr)
 	}
 	mount := CommandSpec{Name: dokku, Args: []string{"storage:mount", app, entry, "--container-dir", mountPath, "--phase", "deploy,run", "--volume-readonly"}, Env: env, Stdout: stdout, Stderr: stderr}
@@ -141,7 +136,7 @@ func (p *Plugin) rollbackEnable(config AppConfig, mounted bool, cause error, env
 		stateErr := p.State.SaveApp(config)
 		return errors.Join(cause, unmountErr, fmt.Errorf("rollback storage destroy: %w", destroyErr), stateErr)
 	}
-	removeErr := os.RemoveAll(p.State.RenderedDir(config.StorageEntry))
+	removeErr := removeRenderedStorage(p.State.RenderedDir(config.StorageEntry))
 	if removeErr != nil {
 		config.Enabled = false
 		config.CleanupPhase = cleanupPhaseStorageDestroyed
@@ -209,7 +204,7 @@ func (p *Plugin) purgeAppLocked(app string, stdout, stderr io.Writer) error {
 	if err := os.Remove(p.State.PendingMetadataPath(app)); err != nil && !isNotExist(err) {
 		return fmt.Errorf("remove pending metadata; cleanup state was retained for retry: %w", err)
 	}
-	if err := os.RemoveAll(p.State.RenderedDir(config.StorageEntry)); err != nil {
+	if err := removeRenderedStorage(p.State.RenderedDir(config.StorageEntry)); err != nil {
 		return fmt.Errorf("remove rendered secrets; cleanup state was retained for retry: %w", err)
 	}
 	if err := p.State.RemoveApp(app); err != nil {

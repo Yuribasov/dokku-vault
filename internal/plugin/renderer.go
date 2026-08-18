@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -68,6 +67,17 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 	}
 	if config.TemplateMode != DefaultTemplateMode && config.TemplateMode != "custom" {
 		return fmt.Errorf("unknown template mode %q", config.TemplateMode)
+	}
+	livePath := p.State.RenderedDir(config.StorageEntry)
+	current, err := ensureGenerationStorage(livePath)
+	if err != nil {
+		return fmt.Errorf("prepare rendered storage: %w", err)
+	}
+	if config.ActiveGeneration == "" {
+		config.ActiveGeneration = current
+		if err := p.State.SaveApp(config); err != nil {
+			return err
+		}
 	}
 
 	revisionBytes, err := p.Runner.Output(CommandSpec{
@@ -159,8 +169,13 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 	if err := validateRenderedOutputs(outputDir, outputs); err != nil {
 		return err
 	}
-	if err := publishRenderedOutputs(outputDir, p.State.RenderedDir(config.StorageEntry), outputs); err != nil {
+	generation, err := publishRenderedOutputs(outputDir, livePath, outputs)
+	if err != nil {
 		return err
+	}
+	config.PendingGeneration = generation
+	if err := p.State.SaveApp(config); err != nil {
+		return fmt.Errorf("record rendered generation: %w", err)
 	}
 	fmt.Fprintf(stdout, "-----> Published %d rendered file(s) for %s\n", len(outputs), app)
 	return nil
@@ -338,73 +353,6 @@ func validateRenderedOutputs(root string, outputs []renderOutput) error {
 		if info.Mode().Perm() != fs.FileMode(expected) {
 			return fmt.Errorf("rendered output %q has mode %04o, expected %s", output.Relative, info.Mode().Perm(), output.Perms)
 		}
-	}
-	return nil
-}
-
-func publishRenderedOutputs(sourceRoot, destinationRoot string, outputs []renderOutput) error {
-	if err := os.MkdirAll(destinationRoot, 0755); err != nil {
-		return err
-	}
-	expected := make(map[string]bool, len(outputs))
-	for _, output := range outputs {
-		expected[filepath.Clean(filepath.FromSlash(output.Relative))] = true
-		source := filepath.Join(sourceRoot, filepath.FromSlash(output.Relative))
-		destination := filepath.Join(destinationRoot, filepath.FromSlash(output.Relative))
-		if err := ensurePathWithin(destinationRoot, destination); err != nil {
-			return err
-		}
-		if err := secureMkdirParents(destinationRoot, filepath.Dir(destination)); err != nil {
-			return err
-		}
-		file, err := os.Open(source)
-		if err != nil {
-			return err
-		}
-		data, readErr := readBounded(file, maximumRenderedFileSize)
-		closeErr := file.Close()
-		if readErr != nil {
-			return readErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		modeValue, _ := strconv.ParseUint(output.Perms, 8, 32)
-		if err := writeFileAtomic(destination, data, fs.FileMode(modeValue)); err != nil {
-			return err
-		}
-	}
-	var obsoleteFiles []string
-	var directories []string
-	err := filepath.WalkDir(destinationRoot, func(current string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if current == destinationRoot {
-			return nil
-		}
-		relative, err := filepath.Rel(destinationRoot, current)
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			directories = append(directories, current)
-		} else if !expected[relative] {
-			obsoleteFiles = append(obsoleteFiles, current)
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	for _, file := range obsoleteFiles {
-		if err := os.Remove(file); err != nil {
-			return err
-		}
-	}
-	sort.Slice(directories, func(i, j int) bool { return len(directories[i]) > len(directories[j]) })
-	for _, directory := range directories {
-		_ = os.Remove(directory)
 	}
 	return nil
 }

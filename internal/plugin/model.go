@@ -29,16 +29,18 @@ type ManagedTemplate struct {
 }
 
 type AppConfig struct {
-	AppName       string            `json:"app_name"`
-	Enabled       bool              `json:"enabled"`
-	MountPath     string            `json:"mount_path"`
-	RoleName      string            `json:"role_name"`
-	AppRoleMount  string            `json:"approle_mount"`
-	StorageEntry  string            `json:"storage_entry"`
-	TemplateMode  string            `json:"template_mode"`
-	Templates     []ManagedTemplate `json:"templates,omitempty"`
-	CustomHCLFile string            `json:"custom_hcl_file,omitempty"`
-	CleanupPhase  string            `json:"cleanup_phase,omitempty"`
+	AppName           string            `json:"app_name"`
+	Enabled           bool              `json:"enabled"`
+	MountPath         string            `json:"mount_path"`
+	RoleName          string            `json:"role_name"`
+	AppRoleMount      string            `json:"approle_mount"`
+	StorageEntry      string            `json:"storage_entry"`
+	TemplateMode      string            `json:"template_mode"`
+	Templates         []ManagedTemplate `json:"templates,omitempty"`
+	CustomHCLFile     string            `json:"custom_hcl_file,omitempty"`
+	CleanupPhase      string            `json:"cleanup_phase,omitempty"`
+	ActiveGeneration  string            `json:"active_generation,omitempty"`
+	PendingGeneration string            `json:"pending_generation,omitempty"`
 }
 
 type StagedCredential struct {

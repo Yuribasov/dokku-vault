@@ -25,7 +25,7 @@ func New() (*Plugin, error) {
 
 func IsTrigger(name string) bool {
 	switch name {
-	case "pre-release-builder", "pre-delete", "post-app-clone-setup", "post-app-rename-setup":
+	case "pre-release-builder", "pre-delete", "post-app-clone-setup", "post-app-rename-setup", "post-deploy":
 		return true
 	default:
 		return false
@@ -93,6 +93,8 @@ func (p *Plugin) runTrigger(action string, args []string, stdout, stderr io.Writ
 		return p.triggerPostClone(args, stdout, stderr)
 	case "post-app-rename-setup":
 		return p.triggerPostRename(args)
+	case "post-deploy":
+		return p.triggerPostDeploy(args, stderr)
 	default:
 		return fmt.Errorf("unknown trigger %q", action)
 	}

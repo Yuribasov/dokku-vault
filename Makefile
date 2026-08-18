@@ -20,6 +20,7 @@ COMMANDS := \
 TRIGGERS := \
 	post-app-clone-setup \
 	post-app-rename-setup \
+	post-deploy \
 	pre-delete \
 	pre-release-builder
 
