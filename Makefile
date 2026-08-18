@@ -23,20 +23,21 @@ TRIGGERS := \
 	pre-delete \
 	pre-release-builder
 
-.PHONY: build clean links test
+.PHONY: build clean link-files links test
 
 build:
 	mkdir -p bin
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o $(PLUGIN_BINARY) ./cmd/dokku-vault-agent
 
-links: build
+link-files:
 	mkdir -p subcommands
 	for command in $(COMMANDS); do ln -sfn ../$(PLUGIN_BINARY) "subcommands/$$command"; done
 	for trigger in $(TRIGGERS); do ln -sfn $(PLUGIN_BINARY) "$$trigger"; done
+
+links: build link-files
 
 test:
 	$(GO) test ./...
 
 clean:
 	rm -rf bin subcommands $(TRIGGERS) coverage.out
-

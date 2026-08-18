@@ -3,15 +3,38 @@ set -eo pipefail
 [[ ${DOKKU_TRACE:-} ]] && set -x
 
 PLUGIN_DIR=$(cd "$(dirname "$0")" && pwd)
+MINIMUM_DOKKU_VERSION=0.38.25
+DOKKU_BIN=${DOKKU_BIN:-dokku}
+DOCKER_BIN=${DOCKER_BIN:-docker}
+DEFAULT_BUILD_IMAGE='golang:1.26.5-alpine3.23@sha256:622e56dbc11a8cfe87cafa2331e9a201877271cbff918af53d3be315f3da88cc'
+BUILD_IMAGE=${DOKKU_VAULT_AGENT_BUILD_IMAGE:-$DEFAULT_BUILD_IMAGE}
 
-if ! command -v go >/dev/null 2>&1; then
-  echo " !     Go is required to install dokku-vault-agent" >&2
-  echo " !     Install Go 1.24+ and rerun: dokku plugin:install" >&2
+DOKKU_VERSION_OUTPUT=$("$DOKKU_BIN" version 2>/dev/null)
+DOKKU_VERSION=$(sed -n 's/.*version[[:space:]]\+v\?\([0-9][0-9.]*\).*/\1/p' <<<"$DOKKU_VERSION_OUTPUT")
+if [[ -z $DOKKU_VERSION ]] || [[ $(printf '%s\n' "$MINIMUM_DOKKU_VERSION" "$DOKKU_VERSION" | sort -V | head -n1) != "$MINIMUM_DOKKU_VERSION" ]]; then
+  echo " !     dokku-vault-agent requires Dokku $MINIMUM_DOKKU_VERSION or newer (found: ${DOKKU_VERSION:-unknown})" >&2
   exit 1
 fi
 
-make -C "$PLUGIN_DIR" links
+if command -v go >/dev/null 2>&1; then
+  make -C "$PLUGIN_DIR" links
+else
+  if [[ ! $BUILD_IMAGE =~ ^golang:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$ ]]; then
+    echo " !     DOKKU_VAULT_AGENT_BUILD_IMAGE must be a digest-pinned official golang image" >&2
+    exit 1
+  fi
+  echo "-----> Building dokku-vault-agent with $BUILD_IMAGE"
+  "$DOCKER_BIN" run --rm --pull=missing \
+    --user "$(id -u):$(id -g)" \
+    --volume "$PLUGIN_DIR:/src" \
+    --workdir /src \
+    --env GOCACHE=/tmp/go-cache \
+    --env GOMODCACHE=/tmp/go-mod-cache \
+    "$BUILD_IMAGE" \
+    sh -ec 'mkdir -p bin && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/dokku-vault-agent ./cmd/dokku-vault-agent'
+  make -C "$PLUGIN_DIR" link-files
+fi
+
 "$PLUGIN_DIR/bin/dokku-vault-agent" internal install
 
 echo "-----> Installed dokku-vault-agent"
-

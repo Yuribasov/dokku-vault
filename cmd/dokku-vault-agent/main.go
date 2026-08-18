@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/example/dokku-vault-agent/internal/plugin"
+	"dokku-vault-agent/internal/plugin"
 )
 
 func main() {
