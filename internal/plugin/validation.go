@@ -15,6 +15,9 @@ var (
 	revisionPattern     = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 	imagePattern        = regexp.MustCompile(`^hashicorp/vault:[A-Za-z0-9][A-Za-z0-9._-]*@sha256:[0-9a-f]{64}$`)
 	tokenPattern        = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	appRoleMountPattern = regexp.MustCompile(`^auth/[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$`)
+	roleNamePattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	storageEntryPattern = regexp.MustCompile(`^vault-[a-z0-9-]+-[0-9a-f]{8}$`)
 )
 
 func validateAppName(app string) error {
@@ -33,8 +36,8 @@ func validateTemplateName(name string) error {
 
 func validateVaultAddress(value string) error {
 	parsed, err := url.Parse(value)
-	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.User != nil {
-		return fmt.Errorf("Vault address must be an absolute HTTP(S) URL without credentials")
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return fmt.Errorf("Vault address must be an absolute HTTPS URL without credentials")
 	}
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("Vault address must not contain a query or fragment")
@@ -69,14 +72,21 @@ func validateDestination(value string) error {
 }
 
 func validateAppRoleMount(value string) error {
-	if value == "" || strings.HasPrefix(value, "/") || path.Clean(value) != value || strings.HasPrefix(value, "../") {
-		return fmt.Errorf("AppRole mount must be a normalized relative Vault path")
+	if len(value) > 256 || !appRoleMountPattern.MatchString(value) {
+		return fmt.Errorf("AppRole mount must be a normalized Vault auth path containing only letters, digits, dots, underscores, and hyphens")
+	}
+	return nil
+}
+
+func validateRoleName(value string) error {
+	if len(value) > 128 || !roleNamePattern.MatchString(value) {
+		return fmt.Errorf("role name must contain only letters, digits, dots, underscores, and hyphens")
 	}
 	return nil
 }
 
 func validateStorageEntry(value string) error {
-	if len(value) > 45 || !regexp.MustCompile(`^vault-[a-z0-9-]+-[0-9a-f]{8}$`).MatchString(value) {
+	if len(value) > 45 || !storageEntryPattern.MatchString(value) {
 		return fmt.Errorf("invalid plugin storage entry %q", value)
 	}
 	return nil

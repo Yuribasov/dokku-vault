@@ -60,8 +60,8 @@ func (p *Plugin) commandEnable(args []string, stdout, stderr io.Writer) error {
 	if err := validateAppRoleMount(approleMount); err != nil {
 		return err
 	}
-	if strings.ContainsAny(roleName, "\r\n/") {
-		return fmt.Errorf("role name must not contain slashes or newlines")
+	if err := validateRoleName(roleName); err != nil {
+		return err
 	}
 	if _, err := p.State.LoadApp(app); err == nil {
 		return fmt.Errorf("Vault Agent integration is already enabled for %q", app)
@@ -74,13 +74,13 @@ func (p *Plugin) commandEnable(args []string, stdout, stderr io.Writer) error {
 	if err := p.Runner.Run(CommandSpec{Name: plugn, Args: []string{"trigger", "app-exists", app}, Env: env, Stdout: stdout, Stderr: stderr}); err != nil {
 		return fmt.Errorf("Dokku app %q does not exist: %w", app, err)
 	}
-	selected, err := p.Runner.Output(CommandSpec{Name: plugn, Args: []string{"trigger", "scheduler-get-property", app, "selected"}, Env: env, Stderr: stderr})
+	selected, err := p.Runner.Output(CommandSpec{Name: plugn, Args: []string{"trigger", "scheduler-detect", app}, Env: env, Stderr: stderr})
 	if err != nil {
-		return fmt.Errorf("read scheduler for %q: %w", app, err)
+		return fmt.Errorf("detect scheduler for %q: %w", app, err)
 	}
 	scheduler := strings.TrimSpace(string(selected))
 	if scheduler == "" {
-		scheduler = "docker-local"
+		return fmt.Errorf("detect scheduler for %q: Dokku returned an empty scheduler", app)
 	}
 	if scheduler != "docker-local" {
 		return fmt.Errorf("app %q uses unsupported scheduler %q; only docker-local is supported", app, scheduler)

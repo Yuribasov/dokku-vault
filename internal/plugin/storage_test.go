@@ -53,6 +53,9 @@ func TestEnableUsesExplicitAppAndClearsInheritedRouting(t *testing.T) {
 	if len(runner.specs) != 4 {
 		t.Fatalf("expected app check, scheduler check, create, and mount; got %d", len(runner.specs))
 	}
+	if got := strings.Join(runner.specs[1].Args, " "); got != "trigger scheduler-detect sample" {
+		t.Fatalf("unexpected scheduler detection command: %s", got)
+	}
 	for _, spec := range runner.specs {
 		for _, value := range spec.Env {
 			if strings.HasPrefix(value, "DOKKU_APP_NAME=") {
@@ -76,5 +79,25 @@ func TestEnableUsesExplicitAppAndClearsInheritedRouting(t *testing.T) {
 	}
 	if !config.Enabled || config.StorageEntry != storageEntryName("sample") {
 		t.Fatalf("unexpected saved config: %#v", config)
+	}
+}
+
+func TestEnableRejectsUnsupportedOrMissingScheduler(t *testing.T) {
+	for _, scheduler := range []string{"k3s", ""} {
+		t.Run(scheduler, func(t *testing.T) {
+			runner := &fakeRunner{outputFn: func(CommandSpec) ([]byte, error) {
+				return []byte(scheduler + "\n"), nil
+			}}
+			plugin := newTestPlugin(t.TempDir(), runner)
+			err := plugin.commandEnable([]string{
+				"sample", "--mount-path", "/app/secrets", "--role-name", "sample-role",
+			}, io.Discard, io.Discard)
+			if err == nil {
+				t.Fatalf("scheduler %q was accepted", scheduler)
+			}
+			if len(runner.specs) != 2 {
+				t.Fatalf("expected only app and scheduler checks, got %d calls", len(runner.specs))
+			}
+		})
 	}
 }

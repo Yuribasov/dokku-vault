@@ -49,3 +49,45 @@ func TestSecuritySensitiveValidation(t *testing.T) {
 		t.Fatalf("safe destination rejected: %v", err)
 	}
 }
+
+func TestVaultAddressRequiresHTTPS(t *testing.T) {
+	for _, address := range []string{
+		"http://vault.example.test",
+		"https://user:password@vault.example.test",
+		"https://vault.example.test?token=value",
+		"https://vault.example.test#fragment",
+	} {
+		if validateVaultAddress(address) == nil {
+			t.Errorf("unsafe Vault address accepted: %q", address)
+		}
+	}
+	if err := validateVaultAddress("https://vault.example.test:8200"); err != nil {
+		t.Fatalf("safe Vault address rejected: %v", err)
+	}
+}
+
+func TestAppRoleMountValidation(t *testing.T) {
+	for _, mount := range []string{"", ".", "approle", "/auth/approle", "auth/../approle", "auth/approle/", "auth/approle role"} {
+		if validateAppRoleMount(mount) == nil {
+			t.Errorf("invalid AppRole mount accepted: %q", mount)
+		}
+	}
+	for _, mount := range []string{"auth/approle", "auth/team/approle-v2"} {
+		if err := validateAppRoleMount(mount); err != nil {
+			t.Errorf("valid AppRole mount rejected: %q: %v", mount, err)
+		}
+	}
+}
+
+func TestRoleNameValidation(t *testing.T) {
+	for _, role := range []string{"", " ", "role/name", "role name", ".hidden", "-option"} {
+		if validateRoleName(role) == nil {
+			t.Errorf("invalid role name accepted: %q", role)
+		}
+	}
+	for _, role := range []string{"sample", "sample-role", "sample_role.v2"} {
+		if err := validateRoleName(role); err != nil {
+			t.Errorf("valid role name rejected: %q: %v", role, err)
+		}
+	}
+}
