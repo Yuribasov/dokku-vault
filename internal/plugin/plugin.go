@@ -50,6 +50,30 @@ func (p *Plugin) Run(mode, action string, args []string, stdin io.Reader, stdout
 
 func (p *Plugin) runCommand(action string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	switch action {
+	case "configure":
+		return p.commandConfigure(args, stdout, stderr)
+	case "ca:set":
+		return p.commandCASet(args, stdin)
+	case "ca:clear":
+		return p.commandCAClear(args)
+	case "enable":
+		return p.commandEnable(args, stdout, stderr)
+	case "disable":
+		return p.commandDisable(args, stdout, stderr)
+	case "role-id:set":
+		return p.commandRoleIDSet(args, stdin)
+	case "template:add":
+		return p.commandTemplateAdd(args)
+	case "template:list":
+		return p.commandTemplateList(args, stdout)
+	case "template:remove":
+		return p.commandTemplateRemove(args)
+	case "template:set-custom":
+		return p.commandTemplateSetCustom(args, stdin)
+	case "template:clear-custom":
+		return p.commandTemplateClearCustom(args)
+	case "stage":
+		return p.commandStage(args, stdin)
 	case "report":
 		return p.commandReport(args, stdout)
 	default:
@@ -64,25 +88,4 @@ func (p *Plugin) runTrigger(action string, args []string, stdout, stderr io.Writ
 	default:
 		return fmt.Errorf("unknown trigger %q", action)
 	}
-}
-
-func (p *Plugin) commandReport(args []string, stdout io.Writer) error {
-	if len(args) == 0 {
-		config, err := p.State.LoadGlobal()
-		if err != nil {
-			if isNotExist(err) {
-				fmt.Fprintln(stdout, "Vault Agent plugin is not configured")
-				return nil
-			}
-			return err
-		}
-		fmt.Fprintf(stdout, "Vault address: %s\nAgent image: %s\n", config.VaultAddress, config.Image)
-		return nil
-	}
-	config, err := p.State.LoadApp(args[0])
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(stdout, "App: %s\nEnabled: %t\nMount path: %s\nTemplate mode: %s\n", config.AppName, config.Enabled, config.MountPath, config.TemplateMode)
-	return nil
 }

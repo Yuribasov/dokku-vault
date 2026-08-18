@@ -83,16 +83,48 @@ func (s *State) SaveGlobal(config GlobalConfig) error {
 }
 
 func (s *State) LoadApp(app string) (AppConfig, error) {
+	if err := validateAppName(app); err != nil {
+		return AppConfig{}, err
+	}
 	var config AppConfig
 	err := readJSON(s.appConfigPath(app), &config)
 	return config, err
 }
 
 func (s *State) SaveApp(config AppConfig) error {
+	if err := validateAppName(config.AppName); err != nil {
+		return err
+	}
 	if err := s.EnsureApp(config.AppName); err != nil {
 		return err
 	}
 	return writeJSONAtomic(s.appConfigPath(config.AppName), config, 0600)
+}
+
+func (s *State) RemoveApp(app string) error {
+	if err := validateAppName(app); err != nil {
+		return err
+	}
+	return os.RemoveAll(s.appDir(app))
+}
+
+func (s *State) RenameApp(oldApp, newApp string) error {
+	if err := validateAppName(oldApp); err != nil {
+		return err
+	}
+	if err := validateAppName(newApp); err != nil {
+		return err
+	}
+	if _, err := os.Stat(s.appDir(oldApp)); err != nil {
+		return err
+	}
+	if err := s.Setup(); err != nil {
+		return err
+	}
+	if exists(s.appDir(newApp)) {
+		return fmt.Errorf("state already exists for app %q", newApp)
+	}
+	return os.Rename(s.appDir(oldApp), s.appDir(newApp))
 }
 
 func readJSON(path string, target any) error {
