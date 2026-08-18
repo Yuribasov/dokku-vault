@@ -3,13 +3,15 @@ package plugin
 import "time"
 
 const (
-	PluginName            = "vault-agent"
-	DefaultDataRoot       = "/var/lib/dokku/data/vault-agent"
-	DefaultAppRoleMount   = "auth/approle"
-	DefaultTemplateMode   = "managed"
-	DefaultOutputMode     = "0444"
-	MinimumDokkuVersion   = "0.38.25"
-	maximumCredentialSize = 16 * 1024
+	PluginName                   = "vault-agent"
+	DefaultDataRoot              = "/var/lib/dokku/data/vault-agent"
+	DefaultAppRoleMount          = "auth/approle"
+	DefaultTemplateMode          = "managed"
+	DefaultOutputMode            = "0444"
+	MinimumDokkuVersion          = "0.38.25"
+	maximumCredentialSize        = 16 * 1024
+	cleanupPhasePending          = "pending"
+	cleanupPhaseStorageDestroyed = "storage-destroyed"
 )
 
 type GlobalConfig struct {
@@ -36,6 +38,7 @@ type AppConfig struct {
 	TemplateMode  string            `json:"template_mode"`
 	Templates     []ManagedTemplate `json:"templates,omitempty"`
 	CustomHCLFile string            `json:"custom_hcl_file,omitempty"`
+	CleanupPhase  string            `json:"cleanup_phase,omitempty"`
 }
 
 type StagedCredential struct {
