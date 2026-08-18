@@ -151,9 +151,9 @@ func (p *Plugin) purgeApp(app string, stdout, stderr io.Writer) error {
 	dokku := executableFromEnv("DOKKU_BIN", "dokku")
 	var firstErr error
 	if err := p.Runner.Run(CommandSpec{Name: dokku, Args: []string{"storage:unmount", app, config.StorageEntry}, Env: env, Stdout: stdout, Stderr: stderr}); err != nil {
-		firstErr = fmt.Errorf("unmount Dokku storage: %w", err)
+		fmt.Fprintf(stderr, "vault-agent: storage unmount did not succeed; continuing cleanup: %v\n", err)
 	}
-	if err := p.Runner.Run(CommandSpec{Name: dokku, Args: []string{"storage:destroy", config.StorageEntry, "--force"}, Env: env, Stdout: stdout, Stderr: stderr}); err != nil && firstErr == nil {
+	if err := p.Runner.Run(CommandSpec{Name: dokku, Args: []string{"storage:destroy", config.StorageEntry, "--force"}, Env: env, Stdout: stdout, Stderr: stderr}); err != nil {
 		firstErr = fmt.Errorf("destroy Dokku storage: %w", err)
 	}
 	_ = secureRemove(p.State.PendingTokenPath(app))
