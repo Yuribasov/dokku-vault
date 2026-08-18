@@ -4,6 +4,7 @@ set -eo pipefail
 
 PLUGIN_DIR=$(cd "$(dirname "$0")" && pwd)
 MINIMUM_DOKKU_VERSION=0.38.25
+MINIMUM_GO_VERSION=1.25.13
 DOKKU_BIN=${DOKKU_BIN:-dokku}
 DOCKER_BIN=${DOCKER_BIN:-docker}
 DEFAULT_BUILD_IMAGE='golang:1.26.5-alpine3.23@sha256:622e56dbc11a8cfe87cafa2331e9a201877271cbff918af53d3be315f3da88cc'
@@ -16,9 +17,16 @@ if [[ -z $DOKKU_VERSION ]] || [[ $(printf '%s\n' "$MINIMUM_DOKKU_VERSION" "$DOKK
   exit 1
 fi
 
+HOST_GO_VERSION=
 if command -v go >/dev/null 2>&1; then
+  HOST_GO_VERSION=$(go env GOVERSION 2>/dev/null | sed -n 's/^go\([0-9][0-9.]*\)$/\1/p')
+fi
+if [[ -n $HOST_GO_VERSION ]] && [[ $(printf '%s\n' "$MINIMUM_GO_VERSION" "$HOST_GO_VERSION" | sort -V | head -n1) == "$MINIMUM_GO_VERSION" ]]; then
   make -C "$PLUGIN_DIR" links
 else
+  if [[ -n $HOST_GO_VERSION ]]; then
+    echo "-----> Host Go $HOST_GO_VERSION is older than required $MINIMUM_GO_VERSION; using pinned builder"
+  fi
   if [[ ! $BUILD_IMAGE =~ ^golang:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$ ]]; then
     echo " !     DOKKU_VAULT_AGENT_BUILD_IMAGE must be a digest-pinned official golang image" >&2
     exit 1
