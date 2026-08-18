@@ -214,3 +214,65 @@ func TestStageWaitsForInFlightRender(t *testing.T) {
 		t.Fatalf("pending token = %q, want second-token", token)
 	}
 }
+
+func TestRenderTimeoutForcesNamedContainerCleanup(t *testing.T) {
+	root := t.TempDir()
+	revision := strings.Repeat("e", 40)
+	image := "hashicorp/vault:1.20.2@sha256:" + strings.Repeat("f", 64)
+	var sawDeadline, sawCleanup bool
+	runner := &fakeRunner{
+		outputFn: func(CommandSpec) ([]byte, error) { return []byte(revision + "\n"), nil },
+		runFn: func(spec CommandSpec) error {
+			joined := strings.Join(spec.Args, " ")
+			if strings.HasPrefix(joined, "container run ") {
+				if spec.Context == nil {
+					return fmt.Errorf("render command has no context")
+				}
+				if _, ok := spec.Context.Deadline(); !ok {
+					return fmt.Errorf("render command has no deadline")
+				}
+				sawDeadline = true
+				<-spec.Context.Done()
+				return spec.Context.Err()
+			}
+			if strings.HasPrefix(joined, "container rm --force dokku-vault-agent-") {
+				sawCleanup = true
+				return nil
+			}
+			return fmt.Errorf("unexpected command: %s", joined)
+		},
+	}
+	plugin := newTestPlugin(root, runner)
+	if err := plugin.State.SaveGlobal(GlobalConfig{VaultAddress: "https://vault.example.test", Image: image}); err != nil {
+		t.Fatal(err)
+	}
+	config := AppConfig{
+		AppName: "sample", Enabled: true, MountPath: "/app/secrets", RoleName: "sample",
+		AppRoleMount: DefaultAppRoleMount, StorageEntry: storageEntryName("sample"), TemplateMode: DefaultTemplateMode,
+		Templates: []ManagedTemplate{{Name: "secret", SecretPath: "secret/data/sample", Field: "value", Destination: "secret", Decode: "none", Perms: "0444"}},
+	}
+	if err := plugin.State.SaveApp(config); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(plugin.State.RoleIDPath("sample"), []byte("role-id\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := plugin.commandStage([]string{"sample", "--revision", revision, "--ttl-seconds", "300"}, strings.NewReader("wrapped-token\n")); err != nil {
+		t.Fatal(err)
+	}
+	var staged StagedCredential
+	if err := readJSON(plugin.State.PendingMetadataPath("sample"), &staged); err != nil {
+		t.Fatal(err)
+	}
+	staged.ExpiresAt = time.Now().Add(time.Second)
+	if err := writeJSONAtomic(plugin.State.PendingMetadataPath("sample"), staged, 0600); err != nil {
+		t.Fatal(err)
+	}
+	err := plugin.renderApp("sample", io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "Vault Agent render timed out") {
+		t.Fatalf("unexpected timeout result: %v", err)
+	}
+	if !sawDeadline || !sawCleanup {
+		t.Fatalf("deadline=%t cleanup=%t", sawDeadline, sawCleanup)
+	}
+}

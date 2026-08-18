@@ -1,18 +1,20 @@
 package plugin
 
 import (
+	"context"
 	"io"
 	"os"
 	"os/exec"
 )
 
 type CommandSpec struct {
-	Name   string
-	Args   []string
-	Env    []string
-	Stdin  io.Reader
-	Stdout io.Writer
-	Stderr io.Writer
+	Context context.Context
+	Name    string
+	Args    []string
+	Env     []string
+	Stdin   io.Reader
+	Stdout  io.Writer
+	Stderr  io.Writer
 }
 
 type CommandRunner interface {
@@ -23,7 +25,11 @@ type CommandRunner interface {
 type OSCommandRunner struct{}
 
 func (OSCommandRunner) Run(spec CommandSpec) error {
-	cmd := exec.Command(spec.Name, spec.Args...)
+	ctx := spec.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, spec.Name, spec.Args...)
 	cmd.Env = spec.Env
 	if cmd.Env == nil {
 		cmd.Env = os.Environ()
@@ -33,7 +39,11 @@ func (OSCommandRunner) Run(spec CommandSpec) error {
 }
 
 func (OSCommandRunner) Output(spec CommandSpec) ([]byte, error) {
-	cmd := exec.Command(spec.Name, spec.Args...)
+	ctx := spec.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, spec.Name, spec.Args...)
 	cmd.Env = spec.Env
 	if cmd.Env == nil {
 		cmd.Env = os.Environ()

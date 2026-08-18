@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -12,7 +14,11 @@ import (
 	"time"
 )
 
-const maximumRenderedFileSize = 128 * 1024 * 1024
+const (
+	maximumRenderedFileSize = 128 * 1024 * 1024
+	maximumAgentRenderTime  = 5 * time.Minute
+	containerCleanupTime    = 10 * time.Second
+)
 
 type renderOutput struct {
 	Relative string
@@ -147,6 +153,7 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 	}
 	dockerArgs := []string{
 		"container", "run", "--rm",
+		"--name", "dokku-vault-agent-" + filepath.Base(work),
 		"--entrypoint", "vault",
 		"--read-only",
 		"--cap-drop", "ALL",
@@ -163,7 +170,27 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 		"agent", "-config=/vault/config/base.hcl", "-config=/vault/config/templates.hcl",
 	}
 	fmt.Fprintf(stdout, "-----> Rendering Vault secrets for %s\n", app)
-	if err := p.Runner.Run(CommandSpec{Name: docker, Args: dockerArgs, Stdout: stdout, Stderr: stderr}); err != nil {
+	now := time.Now()
+	deadline := now.Add(maximumAgentRenderTime)
+	if credential.ExpiresAt.Before(deadline) {
+		deadline = credential.ExpiresAt
+	}
+	if !deadline.After(now) {
+		return fmt.Errorf("staged credential expired before Vault Agent could start")
+	}
+	renderContext, cancelRender := context.WithDeadline(context.Background(), deadline)
+	defer cancelRender()
+	if err := p.Runner.Run(CommandSpec{Context: renderContext, Name: docker, Args: dockerArgs, Stdout: stdout, Stderr: stderr}); err != nil {
+		if errors.Is(renderContext.Err(), context.DeadlineExceeded) {
+			cleanupContext, cancelCleanup := context.WithTimeout(context.Background(), containerCleanupTime)
+			cleanupErr := p.Runner.Run(CommandSpec{
+				Context: cleanupContext, Name: docker,
+				Args:   []string{"container", "rm", "--force", "dokku-vault-agent-" + filepath.Base(work)},
+				Stdout: io.Discard, Stderr: stderr,
+			})
+			cancelCleanup()
+			return errors.Join(fmt.Errorf("Vault Agent render timed out after %s", deadline.Sub(now).Round(time.Millisecond)), cleanupErr)
+		}
 		return fmt.Errorf("Vault Agent render failed: %w", err)
 	}
 	if err := validateRenderedOutputs(outputDir, outputs); err != nil {
