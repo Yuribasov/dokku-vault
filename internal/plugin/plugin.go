@@ -38,7 +38,7 @@ func (p *Plugin) Run(mode, action string, args []string, stdin io.Reader, stdout
 		if action != "install" {
 			return fmt.Errorf("unknown internal action %q", action)
 		}
-		return p.State.Setup()
+		return p.State.RepairOwnership()
 	case "command":
 		return p.runCommand(action, args, stdin, stdout, stderr)
 	case "trigger":

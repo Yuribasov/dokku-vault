@@ -6,8 +6,15 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 )
+
+type fileOwner struct {
+	uid int
+	gid int
+}
 
 type State struct {
 	Root string
@@ -18,20 +25,34 @@ func NewState(root string) *State {
 }
 
 func (s *State) Setup() error {
-	for _, path := range []string{s.Root, s.appsRoot(), s.renderedRoot(), s.tempRoot()} {
+	for _, path := range []string{s.Root, s.appsRoot(), s.renderedRoot(), s.tempRoot(), s.locksRoot()} {
 		if err := os.MkdirAll(path, 0700); err != nil {
 			return fmt.Errorf("create state directory %s: %w", path, err)
 		}
 		if err := os.Chmod(path, 0700); err != nil {
 			return fmt.Errorf("secure state directory %s: %w", path, err)
 		}
+		if err := chownToSystemUser(path); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// RepairOwnership is used by install and update hooks to migrate state created
+// by older plugin versions or root-invoked commands. Routine commands use
+// Setup, avoiding an unlocked walk across live rendered secrets.
+func (s *State) RepairOwnership() error {
+	if err := s.Setup(); err != nil {
+		return err
+	}
+	return chownTreeToSystemUser(s.Root)
 }
 
 func (s *State) appsRoot() string     { return filepath.Join(s.Root, "apps") }
 func (s *State) renderedRoot() string { return filepath.Join(s.Root, "rendered") }
 func (s *State) tempRoot() string     { return filepath.Join(s.Root, "tmp") }
+func (s *State) locksRoot() string    { return filepath.Join(s.Root, "locks") }
 func (s *State) appDir(app string) string {
 	return filepath.Join(s.appsRoot(), app)
 }
@@ -53,7 +74,7 @@ func (s *State) PendingMetadataPath(app string) string {
 	return filepath.Join(s.appDir(app), "pending.json")
 }
 func (s *State) LockPath(app string) string {
-	return filepath.Join(s.appDir(app), "render.lock")
+	return filepath.Join(s.locksRoot(), app+".lock")
 }
 func (s *State) RenderedDir(entry string) string {
 	return filepath.Join(s.renderedRoot(), entry)
@@ -66,7 +87,10 @@ func (s *State) EnsureApp(app string) error {
 	if err := os.MkdirAll(s.appDir(app), 0700); err != nil {
 		return err
 	}
-	return os.Chmod(s.appDir(app), 0700)
+	if err := os.Chmod(s.appDir(app), 0700); err != nil {
+		return err
+	}
+	return chownToSystemUser(s.appDir(app))
 }
 
 func (s *State) LoadGlobal() (GlobalConfig, error) {
@@ -152,6 +176,9 @@ func writeFileAtomic(path string, data []byte, mode fs.FileMode) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
+	if err := chownAtomicWriteParents(dir); err != nil {
+		return err
+	}
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
 	if err != nil {
 		return err
@@ -159,6 +186,10 @@ func writeFileAtomic(path string, data []byte, mode fs.FileMode) error {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := chownToSystemUser(tmpName); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -174,6 +205,108 @@ func writeFileAtomic(path string, data []byte, mode fs.FileMode) error {
 		return err
 	}
 	return os.Rename(tmpName, path)
+}
+
+func resolveSystemOwner() (fileOwner, error) {
+	name := os.Getenv("DOKKU_SYSTEM_USER")
+	explicitUser := name != ""
+	if name == "" {
+		name = "dokku"
+	}
+	account, err := user.Lookup(name)
+	if err != nil {
+		if explicitUser {
+			return fileOwner{}, fmt.Errorf("look up DOKKU_SYSTEM_USER %q: %w", name, err)
+		}
+		return fileOwner{uid: os.Getuid(), gid: os.Getgid()}, nil
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return fileOwner{}, fmt.Errorf("parse uid for DOKKU_SYSTEM_USER %q: %w", name, err)
+	}
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil {
+		return fileOwner{}, fmt.Errorf("parse gid for DOKKU_SYSTEM_USER %q: %w", name, err)
+	}
+	if groupName := os.Getenv("DOKKU_SYSTEM_GROUP"); groupName != "" {
+		group, lookupErr := user.LookupGroup(groupName)
+		if lookupErr != nil {
+			return fileOwner{}, fmt.Errorf("look up DOKKU_SYSTEM_GROUP %q: %w", groupName, lookupErr)
+		}
+		gid, err = strconv.Atoi(group.Gid)
+		if err != nil {
+			return fileOwner{}, fmt.Errorf("parse gid for DOKKU_SYSTEM_GROUP %q: %w", groupName, err)
+		}
+	}
+	return fileOwner{uid: uid, gid: gid}, nil
+}
+
+func chownToSystemUser(path string) error {
+	owner, err := resolveSystemOwner()
+	if err != nil {
+		return err
+	}
+	return chownPath(path, owner)
+}
+
+func chownPath(path string, owner fileOwner) error {
+	if owner.uid == os.Getuid() && owner.gid == os.Getgid() {
+		return nil
+	}
+	if owner.uid == os.Getuid() {
+		if err := os.Lchown(path, -1, owner.gid); err != nil {
+			return fmt.Errorf("assign %s to Dokku system group %d: %w", path, owner.gid, err)
+		}
+		return nil
+	}
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("cannot assign %s to uid %d gid %d while running as uid %d", path, owner.uid, owner.gid, os.Geteuid())
+	}
+	if err := os.Lchown(path, owner.uid, owner.gid); err != nil {
+		return fmt.Errorf("assign %s to Dokku system user: %w", path, err)
+	}
+	return nil
+}
+
+func chownTreeToSystemUser(root string) error {
+	owner, err := resolveSystemOwner()
+	if err != nil {
+		return err
+	}
+	return filepath.WalkDir(root, func(path string, _ fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		return chownPath(path, owner)
+	})
+}
+
+// Atomic writes are also used for nested rendered destinations. Repair every
+// parent inside the configured plugin root so directories created by MkdirAll
+// cannot remain owned by root after a manually invoked configuration command.
+func chownAtomicWriteParents(dir string) error {
+	owner, err := resolveSystemOwner()
+	if err != nil {
+		return err
+	}
+	root := os.Getenv("DOKKU_VAULT_AGENT_DATA_ROOT")
+	if root == "" {
+		root = DefaultDataRoot
+	}
+	root = filepath.Clean(root)
+	dir = filepath.Clean(dir)
+	relative, err := filepath.Rel(root, dir)
+	if err != nil || relative == ".." || filepath.IsAbs(relative) || relative == "." {
+		return chownPath(dir, owner)
+	}
+	for current := dir; ; current = filepath.Dir(current) {
+		if err := chownPath(current, owner); err != nil {
+			return err
+		}
+		if current == root {
+			return nil
+		}
+	}
 }
 
 func exists(path string) bool {
