@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ ${DOKKU_TRACE:-} ]] && set -x
+
+case "${1:-}" in
+  help | vault-agent:help)
+    cat <<'HELP'
+    vault-agent:configure, Configure the Vault address and pinned Agent image
+    vault-agent:ca:set, Read the Vault CA certificate from stdin
+    vault-agent:ca:clear, Remove the configured Vault CA certificate
+    vault-agent:enable <app>, Enable one-shot Vault rendering for an app
+    vault-agent:disable <app>, Disable Vault rendering and purge app secret data
+    vault-agent:role-id:set <app>, Read an AppRole RoleID from stdin
+    vault-agent:template:add <app> <name>, Add a managed file template
+    vault-agent:template:list <app>, List managed file templates
+    vault-agent:template:remove <app> <name>, Remove a managed file template
+    vault-agent:template:set-custom <app>, Read validated custom template HCL from stdin
+    vault-agent:template:clear-custom <app>, Clear custom HCL and use managed mode
+    vault-agent:stage <app>, Read a wrapped SecretID from stdin for the next release
+    vault-agent:render <app>, Consume a staged credential and render immediately
+    vault-agent:report [<app>], Display sanitized plugin configuration and readiness
+HELP
+    ;;
+  *)
+    exit "${DOKKU_NOT_IMPLEMENTED_EXIT:-10}"
+    ;;
+esac
+

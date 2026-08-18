@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ ${DOKKU_TRACE:-} ]] && set -x
+
+PLUGIN_DIR=$(cd "$(dirname "$0")" && pwd)
+
+if ! command -v go >/dev/null 2>&1; then
+  echo " !     Go is required to install dokku-vault-agent" >&2
+  echo " !     Install Go 1.24+ and rerun: dokku plugin:install" >&2
+  exit 1
+fi
+
+make -C "$PLUGIN_DIR" links
+"$PLUGIN_DIR/bin/dokku-vault-agent" internal install
+
+echo "-----> Installed dokku-vault-agent"
+
