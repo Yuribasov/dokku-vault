@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ ${DOKKU_TRACE:-} ]] && set -x
+
+PLUGIN_DIR=$(cd "$(dirname "$0")" && pwd)
+PLUGIN_NAME=$(basename "$PLUGIN_DIR")
+
+[[ ${1:-} == "$PLUGIN_NAME" ]] || exit 0
+"$PLUGIN_DIR/bin/dokku-vault-agent" internal uninstall-check

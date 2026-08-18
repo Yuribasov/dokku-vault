@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 )
 
 type Plugin struct {
@@ -35,10 +37,14 @@ func IsTrigger(name string) bool {
 func (p *Plugin) Run(mode, action string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	switch mode {
 	case "internal":
-		if action != "install" {
+		switch action {
+		case "install":
+			return p.State.RepairOwnership()
+		case "uninstall-check":
+			return p.checkUninstallSafe()
+		default:
 			return fmt.Errorf("unknown internal action %q", action)
 		}
-		return p.State.RepairOwnership()
 	case "command":
 		return p.runCommand(action, args, stdin, stdout, stderr)
 	case "trigger":
@@ -46,6 +52,41 @@ func (p *Plugin) Run(mode, action string, args []string, stdin io.Reader, stdout
 	default:
 		return fmt.Errorf("unknown invocation mode %q", mode)
 	}
+}
+
+func (p *Plugin) checkUninstallSafe() error {
+	if err := p.State.Setup(); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(p.State.appsRoot())
+	if err != nil {
+		return err
+	}
+	apps := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			return fmt.Errorf("unexpected state entry %s prevents safe uninstall", entry.Name())
+		}
+		if err := validateAppName(entry.Name()); err != nil {
+			return fmt.Errorf("unrecognized app state %s prevents safe uninstall", entry.Name())
+		}
+		if _, err := p.State.LoadApp(entry.Name()); err != nil {
+			return fmt.Errorf("unreadable state for %s prevents safe uninstall: %w", entry.Name(), err)
+		}
+		apps = append(apps, entry.Name())
+	}
+	if len(apps) > 0 {
+		sort.Strings(apps)
+		return fmt.Errorf("refusing uninstall while app integrations exist: %s; run vault-agent:disable for each app first", strings.Join(apps, ", "))
+	}
+	rendered, err := os.ReadDir(p.State.renderedRoot())
+	if err != nil {
+		return err
+	}
+	if len(rendered) > 0 {
+		return fmt.Errorf("refusing uninstall while orphaned rendered secret data exists under %s", p.State.renderedRoot())
+	}
+	return nil
 }
 
 func (p *Plugin) runCommand(action string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
