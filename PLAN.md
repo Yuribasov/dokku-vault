@@ -13,6 +13,8 @@ Create a standalone `dokku-vault-agent` Go plugin targeting Dokku 0.38.25+ with 
 - Fail deployment when credentials, rendering, or validation fail.
 - Purge all files and configuration on disable or app destruction.
 
+Implementation status: the plugin and review repairs are complete in this repository; the real Dokku/Vault integration matrix remains mandatory before production use.
+
 Vault policy, AppRole creation, and CI authentication remain external provisioning concerns.
 
 ## Plugin Interface and Configuration
@@ -23,10 +25,11 @@ Implement these public commands:
   - Set the global Vault address and Vault Agent image.
   - Require an immutable `hashicorp/vault:<version>@sha256:<digest>` image reference.
   - Pull and inspect the image immediately so deployments do not depend on registry availability.
+  - Require HTTPS; use the configured CA path for private PKI.
 - `vault-agent:ca:set` and `vault-agent:ca:clear`
   - Read an optional Vault CA certificate from stdin.
 - `vault-agent:enable APP --mount-path PATH --role-name ROLE [--approle-mount auth/approle]`
-  - Validate that the app exists and uses `docker-local`.
+  - Validate that the app exists and its effective scheduler, including global fallback, is `docker-local`.
   - Create a plugin-owned rendered directory and named Dokku storage entry.
   - Mount it read-only into deploy and run containers at the requested absolute path.
   - Reject `/`, `/proc`, `/sys`, and `/dev` mount targets.
@@ -45,7 +48,7 @@ Implement these public commands:
 - `vault-agent:stage APP --revision FULL_SHA --ttl-seconds N`
   - Read one wrapping token from stdin.
   - Require a full 40- or 64-character hexadecimal Git SHA.
-  - Store token, revision, staging time, and local expiry atomically.
+  - Store token, revision, staging time, and local expiry under the app lock.
   - A new stage replaces and securely removes any older pending token.
 - `vault-agent:render APP`
   - Manually consume a staged token and run the same rendering path as deployment.
@@ -56,7 +59,7 @@ Implement these public commands:
 
 Store state under `/var/lib/dokku/data/vault-agent`:
 
-- Global directory mode `0700`, owned by the Dokku system user.
+- Global directory mode `0700`, owned by the Dokku system user; install/update repairs state from older root-owned versions.
 - Per-app JSON configuration written through atomic rename.
 - RoleID and wrapping-token files mode `0600`.
 - Rendered app directory inside the protected parent, with files using configured read permissions.
@@ -73,6 +76,7 @@ Use the documented `dokku storage:create|mount|unmount|destroy` CLI only from ex
   - Require complete global/app configuration and a non-expired staged token.
   - Read Dokku's current `git-revision` and compare it exactly with the staged SHA.
   - Atomically consume the pending token before invoking Vault; every attempt requires a new token.
+  - Bound execution by the earlier of five minutes or staged-token expiry and force-remove a timed-out named Agent container.
 - Generate a protected temporary Agent configuration containing:
   - `exit_after_auth = true`.
   - Global Vault address and optional CA.
@@ -91,19 +95,21 @@ Use the documented `dokku storage:create|mount|unmount|destroy` CLI only from ex
   - `--userns=host` for this non-root hardened container so plugin-owned credential files remain readable on user-namespace-enabled Docker hosts.
 - After Agent exits successfully:
   - Verify every expected output is a non-empty regular file, not a symlink, and has an allowed mode.
-  - Publish each file into the plugin-owned rendered directory using a same-directory temporary file plus atomic rename.
-  - Remove obsolete files no longer declared by the active template configuration.
+  - Build a complete immutable generation without modifying the live file set.
+  - Atomically replace a relative live symlink so future containers mount the new generation while existing bind mounts retain the prior generation.
+  - Promote on `post-deploy`, retaining the current and immediately previous successful generations and removing older/failed generations.
 - Any validation, Agent, revision, or token failure returns non-zero and aborts the Dokku release. Clean up temporary credentials and rendered staging files on every path.
 - `ps:rebuild` follows the full build/release path and therefore requires a newly staged token bound to the existing SHA.
 - `ps:restart` does not run the release hook and does not rerender or consume a token.
-- A successful render followed by a later Dokku scheduling failure leaves the newly rendered files published; the next deployment still requires a new wrapped SecretID.
+- A successful render followed by a later Dokku scheduling failure leaves a complete pending generation selected for future mounts; already-running containers retain their prior bind-mounted generation. The next render still requires a new wrapped SecretID.
 
 Lifecycle handling:
 
 - `pre-delete` purges plugin storage and state after Dokku's destructive confirmation but before app removal.
 - App cloning removes the cloned plugin-owned storage attachment and leaves Vault integration disabled on the clone.
 - App renaming moves plugin configuration and rendered storage association, retains the configured AppRole name, and deletes any pending token.
-- Disable and destroy are idempotent but always purge.
+- Disable and destroy are idempotent. A failed storage destroy retains a disabled cleanup tombstone and all recovery data; rerunning disable resumes cleanup.
+- Plugin uninstall refuses to proceed while any app integration or orphaned rendered-secret data remains.
 
 ## Vault and CI Contract
 
@@ -138,8 +144,11 @@ Ensure examples disable shell tracing around token handling and never place the 
 - Custom HCL acceptance and rejection for every forbidden block, attribute, and path.
 - Token staging, replacement, expiry, replay prevention, SHA mismatch, and unconditional cleanup.
 - Docker argument construction proves no token appears in argv/environment and all hardening flags are present.
-- Storage CLI adapter clears inherited routing and rolls back partial enable operations.
-- Locking prevents concurrent renders for one app.
+- Storage CLI adapter clears inherited routing, uses `scheduler-detect`, and records failed rollback for retry.
+- Stable app/global locking serializes renders, staging, configuration, rename, and cleanup.
+- Generation tests prove a failed multi-file copy does not change the live generation.
+- Timeout tests prove the process is killed/reaped and named-container cleanup is attempted.
+- Ownership tests cover root-created state migrated to the Dokku UID/GID.
 
 ### Integration tests
 
@@ -154,11 +163,14 @@ Use Dokku 0.38.25+ docker-local and a real Vault development instance:
 - Confirm missing, expired, replayed, wrong-path, wrong-revision, and already-unwrapped tokens abort deployment while the previous app remains active.
 - Confirm disable and app destruction remove storage, rendered files, staged credentials, and configuration.
 - Confirm a clone receives no integration and a rename retains configuration but discards pending credentials.
+- Confirm complete generations switch atomically, old containers retain their old generation, and successful `post-deploy` cleanup preserves exactly the required generations.
+- Confirm storage-destroy failure retains state and a later disable resumes cleanup.
+- Confirm uninstall is refused until every integration is disabled.
 
 ### Compatibility checks
 
 - Fail plugin installation below Dokku 0.38.25.
-- Fail enablement for non-`docker-local` apps.
+- Fail enablement for per-app or globally selected non-`docker-local` schedulers.
 - Test amd64 and arm64 builds.
 
 ## Assumptions
@@ -169,4 +181,3 @@ Use Dokku 0.38.25+ docker-local and a real Vault development instance:
 - Host administrators and the Dokku system user are trusted.
 - Vault provisioning and CI authentication are documented but not performed by the plugin.
 - Version 1 does not inject environment variables directly; dotenv, JSON, Java properties, or similar files may be rendered and consumed by the existing startup script.
-

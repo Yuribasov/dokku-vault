@@ -52,8 +52,9 @@ func (p *Plugin) commandReport(args []string, stdout io.Writer) error {
 	if config.TemplateMode == "custom" {
 		templateReady = exists(p.State.CustomHCLPath(app))
 	}
-	fmt.Fprintf(stdout, "App: %s\nEnabled: %t\nMount path: %s\nStorage entry: %s\nRoleID configured: %t\nTemplate mode: %s\nTemplates ready: %t\nManaged template count: %d\n",
-		config.AppName, config.Enabled, config.MountPath, config.StorageEntry, roleReady, config.TemplateMode, templateReady, templateCount)
+	fmt.Fprintf(stdout, "App: %s\nEnabled: %t\nCleanup phase: %s\nMount path: %s\nStorage entry: %s\nActive generation: %s\nPending generation: %s\nRoleID configured: %t\nTemplate mode: %s\nTemplates ready: %t\nManaged template count: %d\n",
+		config.AppName, config.Enabled, valueOrNone(config.CleanupPhase), config.MountPath, config.StorageEntry,
+		valueOrNone(config.ActiveGeneration), valueOrNone(config.PendingGeneration), roleReady, config.TemplateMode, templateReady, templateCount)
 	var pending StagedCredential
 	if err := readJSON(p.State.PendingMetadataPath(app), &pending); err == nil {
 		status := "ready"
@@ -70,4 +71,11 @@ func (p *Plugin) commandReport(args []string, stdout io.Writer) error {
 		return err
 	}
 	return nil
+}
+
+func valueOrNone(value string) string {
+	if value == "" {
+		return "none"
+	}
+	return value
 }

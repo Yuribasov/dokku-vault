@@ -13,10 +13,10 @@ This project has unit tests, including a simulated release render, but has not y
 - Linux and Dokku 0.38.25 or newer.
 - Dokku's `docker-local` scheduler. Other schedulers are rejected.
 - Docker access on the Dokku host.
-- A reachable Vault server.
+- A reachable Vault server over HTTPS. Plain HTTP Vault addresses are rejected.
 - One AppRole and one least-privilege Vault policy per Dokku application.
 - CI credentials that can create only response-wrapped SecretIDs for the corresponding AppRole.
-- `make` on the Dokku host. Go is optional; installation falls back to a pinned official Go builder image.
+- `make` on the Dokku host. Go 1.25.13 or newer is optional; installation falls back to a pinned official Go builder image when host Go is missing or older.
 
 The plugin stores state under `/var/lib/dokku/data/vault-agent`. Application secret storage is mounted read-only in Dokku's `deploy` and `run` phases.
 
@@ -29,8 +29,11 @@ The plugin stores state under `/var/lib/dokku/data/vault-agent`. Application sec
 5. Dokku invokes the plugin's `pre-release-builder` hook.
 6. The plugin locks the app, compares Dokku's Git revision, and consumes the staged token.
 7. A one-shot Vault Agent container unwraps the SecretID, authenticates, renders all files, and exits.
-8. The plugin validates regular-file type, non-empty content, paths, and modes, then publishes files atomically into the app's read-only named storage.
-9. Any failure aborts the new Dokku release. The previously running release remains in place.
+8. The plugin validates regular-file type, non-empty content, paths, and modes, builds a complete immutable generation, and atomically switches the named-storage path to it.
+9. New containers mount the new generation while already-running containers retain their previous bind-mounted generation.
+10. After a successful deployment, `post-deploy` promotes the generation and safely retires generations older than the immediately previous successful deployment.
+
+Any failure aborts the new Dokku release. Per-file publication never changes the currently running containers, and an incomplete generation is never exposed through the live storage path.
 
 A staged credential is single-attempt. A retry requires a newly wrapped SecretID.
 
@@ -48,7 +51,7 @@ For a local checkout on the Dokku host:
 sudo dokku plugin:install file:///path/to/dokku-vault-agent vault-agent
 ```
 
-Installation uses host Go when available. Otherwise it builds with the digest-pinned image declared in `install`. To override that builder, supply another official, digest-pinned image:
+Installation uses host Go only when it is version 1.25.13 or newer. Otherwise it builds with the digest-pinned image declared in `install`. To override that builder, supply another official, digest-pinned image:
 
 ```sh
 sudo env DOKKU_VAULT_AGENT_BUILD_IMAGE='golang:1.26.5-alpine3.23@sha256:YOUR_64_HEX_DIGEST' \
@@ -74,6 +77,8 @@ sudo dokku vault-agent:configure \
 ```
 
 The plugin pulls the image immediately. Deploys then use that immutable local reference.
+
+Only `https://` Vault addresses are accepted. Use a valid private CA with `vault-agent:ca:set` instead of disabling transport security.
 
 For a private Vault CA:
 
@@ -296,7 +301,7 @@ To rotate a keystore, update Vault, stage a new wrapped SecretID, and perform a 
 Behavior of common Dokku operations:
 
 - `ps:rebuild` invokes the release hook and requires a new token bound to the existing full Git SHA.
-- `ps:restart` does not invoke the release hook and does not consume a staged token.
+- `ps:restart` does not invoke the release hook and does not consume a staged token. It mounts the latest complete generation currently selected by the plugin.
 - App rename preserves configuration and the storage association but discards any pending credential.
 - App clone removes the cloned Vault storage attachment and leaves the clone without Vault integration.
 - App destruction invokes cleanup through `pre-delete`.
@@ -309,6 +314,14 @@ sudo dokku vault-agent:disable myapp
 
 Disable removes the attachment and named storage entry, pending credential, RoleID, templates, app configuration, and rendered files. This is destructive and rendered files are not recoverable unless they can be regenerated from Vault.
 
+Cleanup is retryable. If Dokku cannot destroy the named storage entry, the command returns an error but retains a disabled cleanup tombstone, credentials, configuration, and rendered data. Fix the storage error and rerun `vault-agent:disable APP`; state is removed only after external storage and local secret cleanup both succeed.
+
+Dokku plugin uninstall is refused while any app integration or orphaned rendered-secret data remains. Disable every configured app successfully before running:
+
+```sh
+sudo dokku plugin:uninstall vault-agent
+```
+
 ## Security properties and limitations
 
 - The response-wrapped token is accepted only on stdin, stored as `0600`, bound to a full 40- or 64-character lowercase Git SHA, and consumed before Vault Agent starts. Filesystem-level secure erasure is not guaranteed; use encrypted host storage when that matters.
@@ -316,9 +329,12 @@ Disable removes the attachment and named storage entry, pending credential, Role
 - Vault Agent runs with a read-only root filesystem, all capabilities dropped, `no-new-privileges`, a private `/tmp`, no Docker socket, and the Dokku UID/GID.
 - The Vault image reference must be an immutable `hashicorp/vault` digest.
 - Render outputs must be non-empty regular files with expected read-only modes. Symlinks and traversal are rejected.
-- Publication uses same-directory temporary files and atomic rename per output file.
+- Publication creates a complete immutable generation and atomically switches a relative symlink only after every file has been copied and validated. The current and immediately previous successful generations are retained so in-flight old containers keep their original files.
+- App and global configuration mutations use stable host file locks. Staging cannot replace a credential while a render is consuming it, and disable/rename cannot remove a live lock inode.
+- Vault Agent execution is bounded by the earlier of five minutes or the staged credential expiry. A timed-out named Agent container is force-removed through a separately bounded cleanup command.
+- Install and update repair older root-owned state, and atomic writes preserve the Dokku system UID/GID even when an operator invokes commands through `sudo`.
 - Host root, the Dokku account, Docker daemon administrators, and anyone able to replace this plugin are trusted.
-- This version supports only `docker-local`, has no Vault namespace option, and supports rendered files rather than direct environment-variable injection.
+- This version supports only the effective `docker-local` scheduler, has no Vault namespace option, and supports rendered files rather than direct environment-variable injection.
 - Managed templates target KV v2. Use restricted custom HCL for other engines.
 - One rendered file is limited to 128 MiB.
 - Files are mounted for deploy/run, not Dockerfile build. The Java startup process should fail closed when files are absent or invalid.
@@ -346,7 +362,7 @@ Run `dokku help` for the short command listing. Invalid or incomplete commands f
 
 ## Development
 
-Go 1.24 or newer is required for local builds:
+Go 1.25.13 or newer is required for local builds. The patch-level minimum avoids known standard-library vulnerabilities in older Go 1.25 releases:
 
 ```sh
 make test
