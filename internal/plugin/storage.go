@@ -63,6 +63,11 @@ func (p *Plugin) commandEnable(args []string, stdout, stderr io.Writer) error {
 	if err := validateRoleName(roleName); err != nil {
 		return err
 	}
+	lock, err := p.lockApp(app)
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
 	if _, err := p.State.LoadApp(app); err == nil {
 		return fmt.Errorf("Vault Agent integration is already enabled for %q", app)
 	} else if !isNotExist(err) {
@@ -137,6 +142,15 @@ func (p *Plugin) purgeApp(app string, stdout, stderr io.Writer) error {
 	if err := validateAppName(app); err != nil {
 		return err
 	}
+	lock, err := p.lockApp(app)
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
+	return p.purgeAppLocked(app, stdout, stderr)
+}
+
+func (p *Plugin) purgeAppLocked(app string, stdout, stderr io.Writer) error {
 	config, err := p.State.LoadApp(app)
 	if err != nil {
 		if isNotExist(err) {

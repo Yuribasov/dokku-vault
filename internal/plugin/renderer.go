@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -32,6 +31,11 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 	if err := validateAppName(app); err != nil {
 		return err
 	}
+	lock, err := p.lockApp(app)
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
 	config, err := p.State.LoadApp(app)
 	if err != nil {
 		return fmt.Errorf("app integration is not enabled: %w", err)
@@ -45,12 +49,6 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 	if err := validateAppRoleMount(config.AppRoleMount); err != nil {
 		return err
 	}
-	lock, err := p.lockApp(app)
-	if err != nil {
-		return err
-	}
-	defer unlockFile(lock)
-
 	global, err := p.State.LoadGlobal()
 	if err != nil {
 		return fmt.Errorf("Vault Agent plugin is not configured: %w", err)
@@ -166,26 +164,6 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "-----> Published %d rendered file(s) for %s\n", len(outputs), app)
 	return nil
-}
-
-func (p *Plugin) lockApp(app string) (*os.File, error) {
-	if err := p.State.EnsureApp(app); err != nil {
-		return nil, err
-	}
-	file, err := os.OpenFile(p.State.LockPath(app), os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		file.Close()
-		return nil, err
-	}
-	return file, nil
-}
-
-func unlockFile(file *os.File) {
-	_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-	_ = file.Close()
 }
 
 func (p *Plugin) consumePending(app string) (StagedCredential, string, error) {

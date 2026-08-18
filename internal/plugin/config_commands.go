@@ -102,12 +102,17 @@ func (p *Plugin) commandRoleIDSet(args []string, stdin io.Reader) error {
 	if err := validateAppName(app); err != nil {
 		return err
 	}
-	if _, err := p.State.LoadApp(app); err != nil {
-		return fmt.Errorf("app integration is not enabled: %w", err)
-	}
 	roleID, err := readSingleLine(stdin, maximumCredentialSize, "RoleID")
 	if err != nil {
 		return err
+	}
+	lock, err := p.lockApp(app)
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
+	if _, err := p.State.LoadApp(app); err != nil {
+		return fmt.Errorf("app integration is not enabled: %w", err)
 	}
 	if err := p.State.EnsureApp(app); err != nil {
 		return err

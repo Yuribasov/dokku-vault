@@ -132,7 +132,7 @@ func (s *State) RemoveApp(app string) error {
 	return os.RemoveAll(s.appDir(app))
 }
 
-func (s *State) RenameApp(oldApp, newApp string) error {
+func (s *State) RenameApp(oldApp, newApp string, config AppConfig) error {
 	if err := validateAppName(oldApp); err != nil {
 		return err
 	}
@@ -148,7 +148,21 @@ func (s *State) RenameApp(oldApp, newApp string) error {
 	if exists(s.appDir(newApp)) {
 		return fmt.Errorf("state already exists for app %q", newApp)
 	}
-	return os.Rename(s.appDir(oldApp), s.appDir(newApp))
+	if config.AppName != newApp {
+		return fmt.Errorf("renamed configuration must target app %q", newApp)
+	}
+	oldConfig, err := os.ReadFile(s.appConfigPath(oldApp))
+	if err != nil {
+		return err
+	}
+	if err := writeJSONAtomic(s.appConfigPath(oldApp), config, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(s.appDir(oldApp), s.appDir(newApp)); err != nil {
+		rollbackErr := writeFileAtomic(s.appConfigPath(oldApp), oldConfig, 0600)
+		return errors.Join(fmt.Errorf("rename app state: %w", err), rollbackErr)
+	}
+	return nil
 }
 
 func readJSON(path string, target any) error {

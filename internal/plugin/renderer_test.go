@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRenderConsumesCredentialAndPublishesFile(t *testing.T) {
@@ -132,5 +133,84 @@ func TestStageReplacesTokenWithoutReportingIt(t *testing.T) {
 	}
 	if strings.TrimSpace(string(data)) != "second-token" {
 		t.Fatal("new staged token did not replace the old token")
+	}
+}
+
+func TestStageWaitsForInFlightRender(t *testing.T) {
+	root := t.TempDir()
+	revision := strings.Repeat("c", 40)
+	image := "hashicorp/vault:1.20.2@sha256:" + strings.Repeat("d", 64)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	runner := &fakeRunner{
+		outputFn: func(CommandSpec) ([]byte, error) { return []byte(revision + "\n"), nil },
+		runFn: func(spec CommandSpec) error {
+			close(started)
+			<-release
+			var outputRoot string
+			for index, arg := range spec.Args {
+				if arg == "--mount" && index+1 < len(spec.Args) && strings.Contains(spec.Args[index+1], "dst=/vault/rendered") {
+					for _, component := range strings.Split(spec.Args[index+1], ",") {
+						if strings.HasPrefix(component, "src=") {
+							outputRoot = strings.TrimPrefix(component, "src=")
+						}
+					}
+				}
+			}
+			if outputRoot == "" {
+				return fmt.Errorf("render output mount not found")
+			}
+			target := filepath.Join(outputRoot, "secret.txt")
+			if err := os.WriteFile(target, []byte("first"), 0444); err != nil {
+				return err
+			}
+			return os.Chmod(target, 0444)
+		},
+	}
+	plugin := newTestPlugin(root, runner)
+	if err := plugin.State.SaveGlobal(GlobalConfig{VaultAddress: "https://vault.example.test", Image: image}); err != nil {
+		t.Fatal(err)
+	}
+	config := AppConfig{
+		AppName: "sample", Enabled: true, MountPath: "/app/secrets", RoleName: "sample",
+		AppRoleMount: DefaultAppRoleMount, StorageEntry: storageEntryName("sample"),
+		TemplateMode: DefaultTemplateMode,
+		Templates:    []ManagedTemplate{{Name: "secret", SecretPath: "secret/data/sample", Field: "value", Destination: "secret.txt", Decode: "none", Perms: "0444"}},
+	}
+	if err := plugin.State.SaveApp(config); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(plugin.State.RoleIDPath("sample"), []byte("role-id\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := plugin.commandStage([]string{"sample", "--revision", revision, "--ttl-seconds", "300"}, strings.NewReader("first-token\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	renderDone := make(chan error, 1)
+	go func() { renderDone <- plugin.renderApp("sample", io.Discard, io.Discard) }()
+	<-started
+	stageDone := make(chan error, 1)
+	go func() {
+		stageDone <- plugin.commandStage([]string{"sample", "--revision", revision, "--ttl-seconds", "300"}, strings.NewReader("second-token\n"))
+	}()
+	select {
+	case err := <-stageDone:
+		t.Fatalf("stage completed while render held the app lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err := <-renderDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-stageDone; err != nil {
+		t.Fatal(err)
+	}
+	token, err := os.ReadFile(plugin.State.PendingTokenPath("sample"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(token)) != "second-token" {
+		t.Fatalf("pending token = %q, want second-token", token)
 	}
 }

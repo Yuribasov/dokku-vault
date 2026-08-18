@@ -32,6 +32,11 @@ func (p *Plugin) triggerPostClone(args []string, stdout, stderr io.Writer) error
 		return fmt.Errorf("post-app-clone-setup requires SOURCE_APP DESTINATION_APP")
 	}
 	source, destination := args[0], args[1]
+	locks, err := p.lockApps(source, destination)
+	if err != nil {
+		return err
+	}
+	defer unlockFiles(locks)
 	config, err := p.State.LoadApp(source)
 	if err != nil {
 		if isNotExist(err) {
@@ -55,6 +60,11 @@ func (p *Plugin) triggerPostRename(args []string) error {
 		return fmt.Errorf("post-app-rename-setup requires OLD_APP NEW_APP")
 	}
 	oldApp, newApp := args[0], args[1]
+	locks, err := p.lockApps(oldApp, newApp)
+	if err != nil {
+		return err
+	}
+	defer unlockFiles(locks)
 	config, err := p.State.LoadApp(oldApp)
 	if err != nil {
 		if isNotExist(err) {
@@ -62,13 +72,14 @@ func (p *Plugin) triggerPostRename(args []string) error {
 		}
 		return err
 	}
-	_ = secureRemove(p.State.PendingTokenPath(oldApp))
-	_ = os.Remove(p.State.PendingMetadataPath(oldApp))
-	if err := p.State.RenameApp(oldApp, newApp); err != nil {
-		return err
+	if err := secureRemove(p.State.PendingTokenPath(oldApp)); err != nil {
+		return fmt.Errorf("remove pending token before rename: %w", err)
+	}
+	if err := os.Remove(p.State.PendingMetadataPath(oldApp)); err != nil && !isNotExist(err) {
+		return fmt.Errorf("remove pending metadata before rename: %w", err)
 	}
 	config.AppName = newApp
-	if err := p.State.SaveApp(config); err != nil {
+	if err := p.State.RenameApp(oldApp, newApp, config); err != nil {
 		return err
 	}
 	return nil

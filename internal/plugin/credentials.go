@@ -16,9 +16,6 @@ func (p *Plugin) commandStage(args []string, stdin io.Reader) error {
 	if err := validateAppName(app); err != nil {
 		return err
 	}
-	if _, err := p.State.LoadApp(app); err != nil {
-		return fmt.Errorf("app integration is not enabled: %w", err)
-	}
 	flags, booleans, err := splitFlags(args[1:])
 	if err != nil {
 		return err
@@ -50,6 +47,14 @@ func (p *Plugin) commandStage(args []string, stdin io.Reader) error {
 	}
 	if !tokenPattern.MatchString(token) {
 		return fmt.Errorf("wrapping token contains invalid characters")
+	}
+	lock, err := p.lockApp(app)
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
+	if _, err := p.State.LoadApp(app); err != nil {
+		return fmt.Errorf("app integration is not enabled: %w", err)
 	}
 	if err := p.State.EnsureApp(app); err != nil {
 		return err

@@ -66,6 +66,11 @@ func (p *Plugin) commandTemplateAdd(args []string) error {
 	if err := validateMode(perms); err != nil {
 		return err
 	}
+	lock, err := p.lockApp(app)
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
 	config, err := p.State.LoadApp(app)
 	if err != nil {
 		return fmt.Errorf("app integration is not enabled: %w", err)
@@ -93,6 +98,11 @@ func (p *Plugin) commandTemplateList(args []string, stdout io.Writer) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: vault-agent:template:list APP")
 	}
+	lock, err := p.lockApp(args[0])
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
 	config, err := p.State.LoadApp(args[0])
 	if err != nil {
 		return err
@@ -115,6 +125,11 @@ func (p *Plugin) commandTemplateRemove(args []string) error {
 	if len(args) != 2 {
 		return fmt.Errorf("usage: vault-agent:template:remove APP NAME")
 	}
+	lock, err := p.lockApp(args[0])
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
 	config, err := p.State.LoadApp(args[0])
 	if err != nil {
 		return err
@@ -152,19 +167,24 @@ func (p *Plugin) commandTemplateSetCustom(args []string, stdin io.Reader) error 
 			return fmt.Errorf("unknown flag --%s", name)
 		}
 	}
-	config, err := p.State.LoadApp(app)
-	if err != nil {
-		return err
-	}
-	if len(config.Templates) > 0 && !booleans["replace"] {
-		return fmt.Errorf("managed templates exist; pass --replace to remove them")
-	}
 	data, err := readBounded(stdin, 1024*1024)
 	if err != nil {
 		return err
 	}
 	if _, err := validateCustomHCL(data); err != nil {
 		return err
+	}
+	lock, err := p.lockApp(app)
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
+	config, err := p.State.LoadApp(app)
+	if err != nil {
+		return err
+	}
+	if len(config.Templates) > 0 && !booleans["replace"] {
+		return fmt.Errorf("managed templates exist; pass --replace to remove them")
 	}
 	if err := writeFileAtomic(p.State.CustomHCLPath(app), data, 0600); err != nil {
 		return err
@@ -179,6 +199,11 @@ func (p *Plugin) commandTemplateClearCustom(args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: vault-agent:template:clear-custom APP")
 	}
+	lock, err := p.lockApp(args[0])
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
 	config, err := p.State.LoadApp(args[0])
 	if err != nil {
 		return err

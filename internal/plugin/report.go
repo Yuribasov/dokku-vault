@@ -28,6 +28,11 @@ func (p *Plugin) commandReport(args []string, stdout io.Writer) error {
 	if err := validateAppName(app); err != nil {
 		return err
 	}
+	lock, err := p.lockApp(app)
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
 	config, err := p.State.LoadApp(app)
 	if err != nil {
 		if isNotExist(err) {
