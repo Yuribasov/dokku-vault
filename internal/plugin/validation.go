@@ -75,6 +75,13 @@ func validateAppRoleMount(value string) error {
 	return nil
 }
 
+func validateStorageEntry(value string) error {
+	if len(value) > 45 || !regexp.MustCompile(`^vault-[a-z0-9-]+-[0-9a-f]{8}$`).MatchString(value) {
+		return fmt.Errorf("invalid plugin storage entry %q", value)
+	}
+	return nil
+}
+
 func validateMode(value string) error {
 	switch value {
 	case "0400", "0440", "0444":

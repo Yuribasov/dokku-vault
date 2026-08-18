@@ -144,6 +144,9 @@ func (p *Plugin) purgeApp(app string, stdout, stderr io.Writer) error {
 		}
 		return err
 	}
+	if err := validateStorageEntry(config.StorageEntry); err != nil {
+		return err
+	}
 	env := commandEnvironment()
 	dokku := executableFromEnv("DOKKU_BIN", "dokku")
 	var firstErr error

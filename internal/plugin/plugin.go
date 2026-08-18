@@ -74,17 +74,25 @@ func (p *Plugin) runCommand(action string, args []string, stdin io.Reader, stdou
 		return p.commandTemplateClearCustom(args)
 	case "stage":
 		return p.commandStage(args, stdin)
+	case "render":
+		return p.commandRender(args, stdout, stderr)
 	case "report":
 		return p.commandReport(args, stdout)
 	default:
-		return fmt.Errorf("command %q is not implemented yet", action)
+		return fmt.Errorf("unknown command %q", action)
 	}
 }
 
 func (p *Plugin) runTrigger(action string, args []string, stdout, stderr io.Writer) error {
 	switch action {
-	case "pre-release-builder", "pre-delete", "post-app-clone-setup", "post-app-rename-setup":
-		return nil
+	case "pre-release-builder":
+		return p.triggerPreReleaseBuilder(args, stdout, stderr)
+	case "pre-delete":
+		return p.triggerPreDelete(args, stdout, stderr)
+	case "post-app-clone-setup":
+		return p.triggerPostClone(args, stdout, stderr)
+	case "post-app-rename-setup":
+		return p.triggerPostRename(args)
 	default:
 		return fmt.Errorf("unknown trigger %q", action)
 	}
