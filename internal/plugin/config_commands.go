@@ -34,6 +34,11 @@ func (p *Plugin) commandConfigure(args []string, stdout, stderr io.Writer) error
 	if err := validateImage(image); err != nil {
 		return err
 	}
+	lock, err := p.lockGlobal()
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
 	docker := os.Getenv("DOCKER_BIN")
 	if docker == "" {
 		docker = "docker"
@@ -55,6 +60,11 @@ func (p *Plugin) commandCASet(args []string, stdin io.Reader) error {
 	if err := validatePEMCertificates(data); err != nil {
 		return err
 	}
+	lock, err := p.lockGlobal()
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
 	if err := p.State.Setup(); err != nil {
 		return err
 	}
@@ -88,6 +98,11 @@ func (p *Plugin) commandCAClear(args []string) error {
 	if len(args) != 0 {
 		return fmt.Errorf("usage: vault-agent:ca:clear")
 	}
+	lock, err := p.lockGlobal()
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
 	if err := os.Remove(p.State.CAPath()); err != nil && !isNotExist(err) {
 		return err
 	}

@@ -76,6 +76,7 @@ func (s *State) PendingMetadataPath(app string) string {
 func (s *State) LockPath(app string) string {
 	return filepath.Join(s.locksRoot(), app+".lock")
 }
+func (s *State) GlobalLockPath() string { return filepath.Join(s.locksRoot(), "global.lock") }
 func (s *State) RenderedDir(entry string) string {
 	return filepath.Join(s.renderedRoot(), entry)
 }

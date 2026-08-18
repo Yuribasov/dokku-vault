@@ -14,7 +14,18 @@ func (p *Plugin) lockApp(app string) (*os.File, error) {
 	if err := p.State.Setup(); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(p.State.LockPath(app), os.O_CREATE|os.O_RDWR, 0600)
+	return lockFile(p.State.LockPath(app))
+}
+
+func (p *Plugin) lockGlobal() (*os.File, error) {
+	if err := p.State.Setup(); err != nil {
+		return nil, err
+	}
+	return lockFile(p.State.GlobalLockPath())
+}
+
+func lockFile(path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("open app lock: %w", err)
 	}

@@ -36,6 +36,11 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 	if err := validateAppName(app); err != nil {
 		return err
 	}
+	globalLock, err := p.lockGlobal()
+	if err != nil {
+		return err
+	}
+	defer unlockFile(globalLock)
 	lock, err := p.lockApp(app)
 	if err != nil {
 		return err
@@ -268,9 +273,17 @@ func buildBaseHCL(global GlobalConfig, app AppConfig, hasCA bool) string {
 
 func (p *Plugin) templateConfiguration(app string, config AppConfig) ([]byte, []renderOutput, error) {
 	if config.TemplateMode == "custom" {
-		data, err := os.ReadFile(p.State.CustomHCLPath(app))
+		file, err := os.Open(p.State.CustomHCLPath(app))
 		if err != nil {
 			return nil, nil, err
+		}
+		data, readErr := readBounded(file, 1024*1024)
+		closeErr := file.Close()
+		if readErr != nil {
+			return nil, nil, readErr
+		}
+		if closeErr != nil {
+			return nil, nil, closeErr
 		}
 		custom, err := validateCustomHCL(data)
 		if err != nil {

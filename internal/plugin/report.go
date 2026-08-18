@@ -12,6 +12,11 @@ func (p *Plugin) commandReport(args []string, stdout io.Writer) error {
 		return fmt.Errorf("usage: vault-agent:report [APP]")
 	}
 	if len(args) == 0 {
+		lock, err := p.lockGlobal()
+		if err != nil {
+			return err
+		}
+		defer unlockFile(lock)
 		config, err := p.State.LoadGlobal()
 		if err != nil {
 			if isNotExist(err) {

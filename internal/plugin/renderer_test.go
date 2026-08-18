@@ -276,3 +276,18 @@ func TestRenderTimeoutForcesNamedContainerCleanup(t *testing.T) {
 		t.Fatalf("deadline=%t cleanup=%t", sawDeadline, sawCleanup)
 	}
 }
+
+func TestStoredCustomTemplateReadRemainsBounded(t *testing.T) {
+	plugin := newTestPlugin(t.TempDir(), nil)
+	config := AppConfig{AppName: "sample", TemplateMode: "custom", CustomHCLFile: "templates.hcl"}
+	if err := plugin.State.EnsureApp("sample"); err != nil {
+		t.Fatal(err)
+	}
+	oversized := make([]byte, 1024*1024+1)
+	if err := os.WriteFile(plugin.State.CustomHCLPath("sample"), oversized, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := plugin.templateConfiguration("sample", config); err == nil {
+		t.Fatal("oversized stored custom HCL was accepted")
+	}
+}
