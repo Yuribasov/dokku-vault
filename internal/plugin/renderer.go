@@ -39,11 +39,6 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 	if err := validateAppName(app); err != nil {
 		return err
 	}
-	globalLock, err := p.lockGlobal()
-	if err != nil {
-		return err
-	}
-	defer unlockFile(globalLock)
 	lock, err := p.lockApp(app)
 	if err != nil {
 		return err
@@ -62,14 +57,8 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 	if err := validateAppRoleMount(config.AppRoleMount); err != nil {
 		return err
 	}
-	global, err := p.State.LoadGlobal()
+	global, caCertificate, err := p.snapshotGlobalRenderConfiguration()
 	if err != nil {
-		return fmt.Errorf("Vault Agent plugin is not configured: %w", err)
-	}
-	if err := validateVaultAddress(global.VaultAddress); err != nil {
-		return err
-	}
-	if err := validateImage(global.Image); err != nil {
 		return err
 	}
 	roleID, err := readCredentialFile(p.State.RoleIDPath(app), "RoleID")
@@ -137,12 +126,13 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 		return err
 	}
 	token = ""
-	if exists(p.State.CAPath()) {
-		if err := copyProtectedFile(p.State.CAPath(), filepath.Join(configDir, "vault-ca.pem"), 0400); err != nil {
+	hasCA := caCertificate != nil
+	if hasCA {
+		if err := writeFileAtomic(filepath.Join(configDir, "vault-ca.pem"), caCertificate, 0400); err != nil {
 			return err
 		}
 	}
-	baseHCL := buildBaseHCL(global, config, exists(filepath.Join(configDir, "vault-ca.pem")))
+	baseHCL := buildBaseHCL(global, config, hasCA)
 	if err := writeFileAtomic(filepath.Join(configDir, "base.hcl"), []byte(baseHCL), 0400); err != nil {
 		return err
 	}

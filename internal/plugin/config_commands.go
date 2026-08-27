@@ -34,11 +34,6 @@ func (p *Plugin) commandConfigure(args []string, stdout, stderr io.Writer) error
 	if err := validateImage(image); err != nil {
 		return err
 	}
-	lock, err := p.lockGlobal()
-	if err != nil {
-		return err
-	}
-	defer unlockFile(lock)
 	docker := os.Getenv("DOCKER_BIN")
 	if docker == "" {
 		docker = "docker"
@@ -46,6 +41,11 @@ func (p *Plugin) commandConfigure(args []string, stdout, stderr io.Writer) error
 	if err := p.Runner.Run(CommandSpec{Name: docker, Args: []string{"image", "pull", image}, Stdout: stdout, Stderr: stderr}); err != nil {
 		return fmt.Errorf("pull Vault image: %w", err)
 	}
+	lock, err := p.lockGlobal()
+	if err != nil {
+		return err
+	}
+	defer unlockFile(lock)
 	return p.State.SaveGlobal(GlobalConfig{VaultAddress: strings.TrimRight(address, "/"), Image: image})
 }
 

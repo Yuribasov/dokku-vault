@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -345,5 +347,54 @@ func TestManagedTemplatePreservesHCLInterpolationMarkers(t *testing.T) {
 		if got := value.AsString(); got != want {
 			t.Fatalf("%s = %q, want %q", name, got, want)
 		}
+	}
+}
+
+func TestRenderReleasesGlobalLockBeforeVaultAgentRun(t *testing.T) {
+	root := t.TempDir()
+	revision := strings.Repeat("1", 40)
+	image := "hashicorp/vault:1.20.2@sha256:" + strings.Repeat("2", 64)
+	probeError := errors.New("stop after lock probe")
+	var plugin *Plugin
+	runner := &fakeRunner{
+		outputFn: func(CommandSpec) ([]byte, error) { return []byte(revision + "\n"), nil },
+		runFn: func(spec CommandSpec) error {
+			if len(spec.Args) < 2 || spec.Args[0] != "container" || spec.Args[1] != "run" {
+				return fmt.Errorf("unexpected command: %v", spec.Args)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+			globalLock, err := lockFileContext(ctx, plugin.State.GlobalLockPath())
+			if err != nil {
+				return fmt.Errorf("global lock remained held during Vault Agent run: %w", err)
+			}
+			unlockFile(globalLock)
+			return probeError
+		},
+	}
+	plugin = newTestPlugin(root, runner)
+	if err := plugin.State.SaveGlobal(GlobalConfig{VaultAddress: "https://vault.example.test", Image: image}); err != nil {
+		t.Fatal(err)
+	}
+	config := AppConfig{
+		AppName: "sample", Enabled: true, MountPath: "/app/secrets", RoleName: "sample",
+		AppRoleMount: DefaultAppRoleMount, StorageEntry: storageEntryName("sample"), TemplateMode: DefaultTemplateMode,
+		Templates: []ManagedTemplate{{Name: "secret", SecretPath: "secret/data/sample", Field: "value", Destination: "secret", Decode: "none", Perms: "0444"}},
+	}
+	if err := plugin.State.SaveApp(config); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(plugin.State.RoleIDPath("sample"), []byte("role-id\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := plugin.commandStage([]string{"sample", "--revision", revision, "--ttl-seconds", "300"}, strings.NewReader("wrapped-token\n")); err != nil {
+		t.Fatal(err)
+	}
+	if current, err := user.Current(); err == nil {
+		t.Setenv("DOKKU_SYSTEM_USER", current.Username)
+	}
+	err := plugin.renderApp("sample", io.Discard, io.Discard)
+	if !errors.Is(err, probeError) {
+		t.Fatalf("render error = %v, want probe error", err)
 	}
 }

@@ -1,10 +1,17 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
 	"syscall"
+	"time"
+)
+
+const (
+	maximumLockWaitTime = 5 * time.Minute
+	lockRetryInterval   = 50 * time.Millisecond
 )
 
 func (p *Plugin) lockApp(app string) (*os.File, error) {
@@ -25,6 +32,12 @@ func (p *Plugin) lockGlobal() (*os.File, error) {
 }
 
 func lockFile(path string) (*os.File, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), maximumLockWaitTime)
+	defer cancel()
+	return lockFileContext(ctx, path)
+}
+
+func lockFileContext(ctx context.Context, path string) (*os.File, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("open app lock: %w", err)
@@ -33,11 +46,32 @@ func lockFile(path string) (*os.File, error) {
 		file.Close()
 		return nil, err
 	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		file.Close()
-		return nil, fmt.Errorf("lock app: %w", err)
+	retry := time.NewTicker(lockRetryInterval)
+	defer retry.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			file.Close()
+			return nil, fmt.Errorf("wait for lock %q: %w", path, ctx.Err())
+		default:
+		}
+
+		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return file, nil
+		}
+		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
+			file.Close()
+			return nil, fmt.Errorf("lock app: %w", err)
+		}
+
+		select {
+		case <-ctx.Done():
+			file.Close()
+			return nil, fmt.Errorf("wait for lock %q: %w", path, ctx.Err())
+		case <-retry.C:
+		}
 	}
-	return file, nil
 }
 
 func unlockFile(file *os.File) {
