@@ -167,7 +167,7 @@ func TestSupersededGenerationRetentionIsBounded(t *testing.T) {
 	secret := filepath.Join(source, "secret")
 	var pending string
 	for index := 0; index < 8; index++ {
-		if err := os.WriteFile(secret, []byte{byte(index + 1)}, 0444); err != nil {
+		if err := os.WriteFile(secret, []byte{byte(index + 1)}, 0600); err != nil {
 			t.Fatal(err)
 		}
 		generation, err := publishRenderedOutputs(source, live, []renderOutput{{Relative: "secret", Perms: "0444"}})
