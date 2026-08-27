@@ -64,7 +64,8 @@ func TestPostDeployPromotesGenerationAndRetainsPrevious(t *testing.T) {
 	if err := os.MkdirAll(source, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(source, "secret"), []byte("one"), 0444); err != nil {
+	secret := filepath.Join(source, "secret")
+	if err := os.WriteFile(secret, []byte("one"), 0444); err != nil {
 		t.Fatal(err)
 	}
 	first, err := publishRenderedOutputs(source, live, []renderOutput{{Relative: "secret", Perms: "0444"}})
@@ -94,7 +95,10 @@ func TestPostDeployPromotesGenerationAndRetainsPrevious(t *testing.T) {
 		}
 	}
 
-	if err := os.WriteFile(filepath.Join(source, "secret"), []byte("two"), 0444); err != nil {
+	if err := os.Remove(secret); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secret, []byte("two"), 0444); err != nil {
 		t.Fatal(err)
 	}
 	second, err := publishRenderedOutputs(source, live, []renderOutput{{Relative: "secret", Perms: "0444"}})
