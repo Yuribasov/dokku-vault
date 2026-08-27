@@ -2,6 +2,8 @@
 
 > **WARNING:** This plugin was coded solely by Codex, use at your own risk!
 
+[![Tests](https://github.com/Yuribasov/dokku-vault/actions/workflows/test.yml/badge.svg)](https://github.com/Yuribasov/dokku-vault/actions/workflows/test.yml)
+
 This is an experimental Dokku plugin that renders files from HashiCorp Vault immediately before a Dokku release. It runs Vault Agent once in a hardened host-side Docker container, validates its outputs, publishes them to plugin-managed storage, and exits. The Vault binary is not added to the application image.
 
 The plugin is intended for infrequently rotated files such as Java JKS keystores. Your application image remains responsible for checking that every required file exists and is valid before the Java process starts.

@@ -1,0 +1,58 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Go tests and static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Verify module and vendored dependencies
+        shell: bash
+        run: |
+          go mod verify
+          go mod tidy
+          go mod vendor
+          git diff --exit-code -- go.mod go.sum vendor
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run tests with the race detector
+        run: go test -race ./...
+
+      - name: Measure plugin package coverage
+        run: |
+          go test -covermode=atomic -coverprofile=coverage.out ./internal/plugin
+          go tool cover -func=coverage.out
+
+      - name: Check shell syntax
+        run: bash -n install update uninstall commands
+
+      - name: Build static plugin binary
+        run: make build
