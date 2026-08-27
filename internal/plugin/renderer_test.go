@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 )
 
 func TestRenderConsumesCredentialAndPublishesFile(t *testing.T) {
@@ -289,5 +292,58 @@ func TestStoredCustomTemplateReadRemainsBounded(t *testing.T) {
 	}
 	if _, _, err := plugin.templateConfiguration("sample", config); err == nil {
 		t.Fatal("oversized stored custom HCL was accepted")
+	}
+}
+
+func TestManagedTemplatePreservesHCLInterpolationMarkers(t *testing.T) {
+	plugin := newTestPlugin(t.TempDir(), nil)
+	secretPath := `secret/data/${tenant}/%{segment}`
+	field := `value"${field}%{literal}`
+	destination := `nested/${destination}/%{literal}.txt`
+	config := AppConfig{
+		TemplateMode: DefaultTemplateMode,
+		Templates: []ManagedTemplate{{
+			SecretPath:  secretPath,
+			Field:       field,
+			Destination: destination,
+			Decode:      "none",
+			Perms:       "0444",
+		}},
+	}
+
+	data, outputs, err := plugin.templateConfiguration("sample", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outputs) != 1 || outputs[0].Relative != destination {
+		t.Fatalf("outputs = %#v, want relative path %q", outputs, destination)
+	}
+
+	file, diagnostics := hclsyntax.ParseConfig(data, "templates.hcl", hcl.Pos{Line: 1, Column: 1})
+	if diagnostics.HasErrors() {
+		t.Fatalf("generated HCL did not parse: %s\n%s", diagnostics.Error(), data)
+	}
+	body := file.Body.(*hclsyntax.Body)
+	if len(body.Blocks) != 1 {
+		t.Fatalf("generated HCL contains %d blocks, want 1", len(body.Blocks))
+	}
+	block := body.Blocks[0]
+	wantValues := map[string]string{
+		"contents":    fmt.Sprintf(`{{ with secret %q }}{{ index .Data.data %q }}{{ end }}`, secretPath, field),
+		"destination": "/vault/rendered/" + destination,
+		"perms":       "0444",
+	}
+	for name, want := range wantValues {
+		attribute, ok := block.Body.Attributes[name]
+		if !ok {
+			t.Fatalf("generated HCL lacks %q attribute", name)
+		}
+		value, valueDiagnostics := attribute.Expr.Value(nil)
+		if valueDiagnostics.HasErrors() {
+			t.Fatalf("evaluate %q: %s", name, valueDiagnostics.Error())
+		}
+		if got := value.AsString(); got != want {
+			t.Fatalf("%s = %q, want %q", name, got, want)
+		}
 	}
 }

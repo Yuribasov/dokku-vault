@@ -12,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/hcl/v2/hclwrite"
+	"github.com/zclconf/go-cty/cty"
 )
 
 const (
@@ -250,18 +253,18 @@ func buildBaseHCL(global GlobalConfig, app AppConfig, hasCA bool) string {
 	var builder strings.Builder
 	builder.WriteString("exit_after_auth = true\n\n")
 	builder.WriteString("vault {\n")
-	fmt.Fprintf(&builder, "  address = %s\n", strconv.Quote(global.VaultAddress))
+	fmt.Fprintf(&builder, "  address = %s\n", hclStringLiteral(global.VaultAddress))
 	if hasCA {
 		builder.WriteString("  ca_cert = \"/vault/config/vault-ca.pem\"\n")
 	}
 	builder.WriteString("}\n\n")
 	builder.WriteString("auto_auth {\n")
 	builder.WriteString("  method \"approle\" {\n")
-	fmt.Fprintf(&builder, "    mount_path = %s\n", strconv.Quote(app.AppRoleMount))
+	fmt.Fprintf(&builder, "    mount_path = %s\n", hclStringLiteral(app.AppRoleMount))
 	builder.WriteString("    config = {\n")
 	builder.WriteString("      role_id_file_path = \"/vault/config/role-id\"\n")
 	builder.WriteString("      secret_id_file_path = \"/vault/auth/secret-id\"\n")
-	fmt.Fprintf(&builder, "      secret_id_response_wrapping_path = %s\n", strconv.Quote(app.AppRoleMount+"/role/"+app.RoleName+"/secret-id"))
+	fmt.Fprintf(&builder, "      secret_id_response_wrapping_path = %s\n", hclStringLiteral(app.AppRoleMount+"/role/"+app.RoleName+"/secret-id"))
 	builder.WriteString("      remove_secret_id_file_after_reading = true\n")
 	builder.WriteString("    }\n")
 	builder.WriteString("    exit_on_err = true\n")
@@ -311,9 +314,9 @@ func (p *Plugin) templateConfiguration(app string, config AppConfig) ([]byte, []
 			return nil, nil, fmt.Errorf("unknown decode mode %q", template.Decode)
 		}
 		builder.WriteString("template {\n")
-		fmt.Fprintf(&builder, "  contents = %s\n", strconv.Quote(expression))
-		fmt.Fprintf(&builder, "  destination = %s\n", strconv.Quote("/vault/rendered/"+template.Destination))
-		fmt.Fprintf(&builder, "  perms = %s\n", strconv.Quote(template.Perms))
+		fmt.Fprintf(&builder, "  contents = %s\n", hclStringLiteral(expression))
+		fmt.Fprintf(&builder, "  destination = %s\n", hclStringLiteral("/vault/rendered/"+template.Destination))
+		fmt.Fprintf(&builder, "  perms = %s\n", hclStringLiteral(template.Perms))
 		builder.WriteString("  backup = false\n")
 		builder.WriteString("  create_dest_dirs = true\n")
 		builder.WriteString("  error_on_missing_key = true\n")
@@ -321,6 +324,10 @@ func (p *Plugin) templateConfiguration(app string, config AppConfig) ([]byte, []
 		outputs = append(outputs, renderOutput{Relative: template.Destination, Perms: template.Perms})
 	}
 	return []byte(builder.String()), outputs, nil
+}
+
+func hclStringLiteral(value string) string {
+	return string(hclwrite.TokensForValue(cty.StringVal(value)).Bytes())
 }
 
 func bindMount(source, destination string, readonly bool) string {
