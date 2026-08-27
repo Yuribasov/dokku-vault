@@ -152,3 +152,44 @@ func TestExistingRenderedDirectoryMigratesToGenerationSymlink(t *testing.T) {
 		t.Fatalf("migration changed rendered content: %q", data)
 	}
 }
+
+func TestSupersededGenerationRetentionIsBounded(t *testing.T) {
+	root := t.TempDir()
+	live := filepath.Join(root, "rendered", "vault-sample")
+	active, err := ensureGenerationStorage(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "source")
+	if err := os.MkdirAll(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(source, "secret")
+	var pending string
+	for index := 0; index < 8; index++ {
+		if err := os.WriteFile(secret, []byte{byte(index + 1)}, 0444); err != nil {
+			t.Fatal(err)
+		}
+		generation, err := publishRenderedOutputs(source, live, []renderOutput{{Relative: "secret", Perms: "0444"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending = generation
+		if err := cleanupSupersededGenerations(live, maximumRetainedSupersededGenerations, active, pending); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := os.ReadDir(generationsDir(live))
+	if err != nil {
+		t.Fatal(err)
+	}
+	maximum := 2 + maximumRetainedSupersededGenerations
+	if len(entries) > maximum {
+		t.Fatalf("retained %d generations after repeated failed deploys, want at most %d", len(entries), maximum)
+	}
+	for _, generation := range []string{active, pending} {
+		if !exists(filepath.Join(generationsDir(live), generation)) {
+			t.Fatalf("required generation %q was removed", generation)
+		}
+	}
+}

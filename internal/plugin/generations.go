@@ -5,8 +5,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 )
+
+const maximumRetainedSupersededGenerations = 2
 
 func generationsDir(livePath string) string {
 	return livePath + ".generations"
@@ -211,6 +214,52 @@ func cleanupGenerations(livePath string, keep ...string) error {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(generationsDir(livePath), entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func cleanupSupersededGenerations(livePath string, retain int, keep ...string) error {
+	if retain < 0 {
+		return fmt.Errorf("retained generation count must not be negative")
+	}
+	wanted := make(map[string]bool, len(keep))
+	for _, generation := range keep {
+		if generation != "" {
+			wanted[generation] = true
+		}
+	}
+	entries, err := os.ReadDir(generationsDir(livePath))
+	if err != nil {
+		return err
+	}
+	type candidate struct {
+		name     string
+		modified int64
+	}
+	candidates := make([]candidate, 0, len(entries))
+	for _, entry := range entries {
+		if wanted[entry.Name()] {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		candidates = append(candidates, candidate{name: entry.Name(), modified: info.ModTime().UnixNano()})
+	}
+	sort.Slice(candidates, func(left, right int) bool {
+		if candidates[left].modified == candidates[right].modified {
+			return candidates[left].name > candidates[right].name
+		}
+		return candidates[left].modified > candidates[right].modified
+	})
+	if len(candidates) <= retain {
+		return nil
+	}
+	for _, candidate := range candidates[retain:] {
+		if err := os.RemoveAll(filepath.Join(generationsDir(livePath), candidate.name)); err != nil {
 			return err
 		}
 	}

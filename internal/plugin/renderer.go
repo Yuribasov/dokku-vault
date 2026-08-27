@@ -202,6 +202,9 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 	if err := p.State.SaveApp(config); err != nil {
 		return fmt.Errorf("record rendered generation: %w", err)
 	}
+	if err := cleanupSupersededGenerations(livePath, maximumRetainedSupersededGenerations, config.ActiveGeneration, config.PendingGeneration); err != nil {
+		fmt.Fprintf(stderr, "vault-agent: unable to remove superseded secret generations; they will be retried after a later render: %v\n", err)
+	}
 	fmt.Fprintf(stdout, "-----> Published %d rendered file(s) for %s\n", len(outputs), app)
 	return nil
 }

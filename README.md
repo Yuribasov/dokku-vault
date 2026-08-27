@@ -36,7 +36,7 @@ The plugin stores state under `/var/lib/dokku/data/vault-agent`. Application sec
 9. New containers mount the new generation while already-running containers retain their previous bind-mounted generation.
 10. After a successful deployment, `post-deploy` promotes the generation and safely retires generations older than the immediately previous successful deployment.
 
-Any failure aborts the new Dokku release. Per-file publication never changes the currently running containers, and an incomplete generation is never exposed through the live storage path.
+Any failure aborts the new Dokku release. Per-file publication never changes the currently running containers, and an incomplete generation is never exposed through the live storage path. Repeated failed deployments retain the active and latest pending generations plus at most two superseded generations; older secret generations are removed after each successful render.
 
 A staged credential is single-attempt. A retry requires a newly wrapped SecretID.
 
@@ -340,8 +340,8 @@ sudo dokku plugin:uninstall vault-agent
 - Vault Agent runs with a read-only root filesystem, all capabilities dropped, `no-new-privileges`, a private `/tmp`, no Docker socket, and the Dokku UID/GID.
 - The Vault image reference must be an immutable `hashicorp/vault` digest.
 - Render outputs must be non-empty regular files with expected read-only modes. Symlinks and traversal are rejected.
-- Publication creates a complete immutable generation and atomically switches a relative symlink only after every file has been copied and validated. The current and immediately previous successful generations are retained so in-flight old containers keep their original files.
-- App and global configuration mutations use stable host file locks. Staging cannot replace a credential while a render is consuming it, and disable/rename cannot remove a live lock inode.
+- Publication creates a complete immutable generation and atomically switches a relative symlink only after every file has been copied and validated. A successful deployment retains the current and immediately previous generations; failed-deploy retention is bounded to the active, pending, and two superseded generations.
+- App and global configuration mutations use stable host file locks with bounded acquisition waits. Staging cannot replace a credential while a render is consuming it, and disable/rename cannot remove a live lock inode. Rendering releases the global lock after snapshotting global configuration and CA data.
 - Vault Agent execution is bounded by the earlier of five minutes or the staged credential expiry. A timed-out named Agent container is force-removed through a separately bounded cleanup command.
 - Install and update repair older root-owned state, and atomic writes preserve the Dokku system UID/GID even when an operator invokes commands through `sudo`.
 - Host root, the Dokku account, Docker daemon administrators, and anyone able to replace this plugin are trusted.
