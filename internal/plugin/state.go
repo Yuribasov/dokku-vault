@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 type fileOwner struct {
@@ -310,8 +311,7 @@ func chownAtomicWriteParents(dir string) error {
 	}
 	root = filepath.Clean(root)
 	dir = filepath.Clean(dir)
-	relative, err := filepath.Rel(root, dir)
-	if err != nil || relative == ".." || filepath.IsAbs(relative) || relative == "." {
+	if !pathWithinRoot(root, dir) || root == dir {
 		return chownPath(dir, owner)
 	}
 	for current := dir; ; current = filepath.Dir(current) {
@@ -322,6 +322,14 @@ func chownAtomicWriteParents(dir string) error {
 			return nil
 		}
 	}
+}
+
+func pathWithinRoot(root, path string) bool {
+	relative, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil || filepath.IsAbs(relative) || relative == ".." {
+		return false
+	}
+	return !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func exists(path string) bool {

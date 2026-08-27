@@ -76,6 +76,28 @@ func TestStateSetupAndAtomicWritesUseSystemOwner(t *testing.T) {
 	}
 }
 
+func TestPathWithinRootRejectsEscapes(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "state")
+
+	tests := map[string]struct {
+		path string
+		want bool
+	}{
+		"root":    {path: root, want: true},
+		"nested":  {path: filepath.Join(root, "apps", "sample"), want: true},
+		"parent":  {path: base, want: false},
+		"sibling": {path: filepath.Join(base, "state-other"), want: false},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := pathWithinRoot(root, test.path); got != test.want {
+				t.Fatalf("pathWithinRoot(%q, %q) = %t, want %t", root, test.path, got, test.want)
+			}
+		})
+	}
+}
+
 func TestStateLockPathIsOutsideAppDirectory(t *testing.T) {
 	state := NewState(filepath.Join(t.TempDir(), "state"))
 	want := filepath.Join(state.Root, "locks", "sample.lock")
