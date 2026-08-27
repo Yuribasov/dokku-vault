@@ -18,7 +18,8 @@ The complete implementation and the full-review repair series are committed. It 
 - install/update ownership repair for state created by root while release hooks run as the Dokku user;
 - sanitized reports and manual rendering;
 - a containerized, digest-pinned Go build fallback, a patched Go 1.25.13 minimum, vendored dependencies, and a clean `govulncheck` result;
-- unit tests, race-detector verification, and operator documentation in [README.md](README.md).
+- unit tests, race-detector verification, and operator documentation in [README.md](README.md);
+- GitHub Actions verification and gated, checksummed release automation.
 
 The implementation commits are recorded in Git. The worktree should be clean after the documentation commit.
 
@@ -52,7 +53,6 @@ No real Dokku/Vault integration environment was available in this workspace. Bef
 6. Confirm file readability with the exact UID/GID used by both Java images.
 7. Test amd64 and arm64 hosts.
 8. Verify Docker resolves the plugin's relative live-generation symlink as expected for bind mounts and that old containers retain their previous generation through `post-deploy`.
-9. Add CI and release automation once the repository's permanent Git hosting location is known.
 
 The warning in [README.md](README.md) is intentional: the code is not yet production-proven.
 

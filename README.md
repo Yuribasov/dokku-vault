@@ -3,6 +3,7 @@
 > **WARNING:** This plugin was coded solely by Codex, use at your own risk!
 
 [![Tests](https://github.com/Yuribasov/dokku-vault/actions/workflows/test.yml/badge.svg)](https://github.com/Yuribasov/dokku-vault/actions/workflows/test.yml)
+[![Release](https://github.com/Yuribasov/dokku-vault/actions/workflows/release.yml/badge.svg)](https://github.com/Yuribasov/dokku-vault/actions/workflows/release.yml)
 
 This is an experimental Dokku plugin that renders files from HashiCorp Vault immediately before a Dokku release. It runs Vault Agent once in a hardened host-side Docker container, validates its outputs, publishes them to plugin-managed storage, and exits. The Vault binary is not added to the application image.
 
@@ -45,6 +46,14 @@ Install the plugin from its GitHub repository:
 
 ```sh
 sudo dokku plugin:install https://github.com/Yuribasov/dokku-vault.git --name vault-agent
+```
+
+For a version-pinned installation that remains compatible with `plugin:update`, install a release tag:
+
+```sh
+sudo dokku plugin:install https://github.com/Yuribasov/dokku-vault.git \
+  --committish v0.2.0 \
+  --name vault-agent
 ```
 
 For a local checkout on the Dokku host:
@@ -361,6 +370,39 @@ vault-agent:report [APP]
 ```
 
 Run `dokku help` for the short command listing. Invalid or incomplete commands fail with a usage error.
+
+## Releases
+
+Every push and pull request to `master` runs the test workflow. A tag beginning with `v` invokes the same checks before the release workflow can publish anything.
+
+Release tags must use `vMAJOR.MINOR.PATCH` or a semantic prerelease such as `v0.3.0-rc.1`. The tag without its leading `v` must exactly match the version in `plugin.toml`.
+
+To publish a release:
+
+```sh
+VERSION=0.3.0
+
+# First update plugin.toml to version = "0.3.0", then commit it.
+git add plugin.toml
+git commit -m "release: prepare v${VERSION}"
+git tag -a "v${VERSION}" -m "v${VERSION}"
+git push origin master "v${VERSION}"
+```
+
+After all verification passes, GitHub Actions creates a release with generated notes and these assets:
+
+- `dokku-vault-vMAJOR.MINOR.PATCH.tar.gz`, an installable plugin source archive including vendored Go dependencies;
+- the corresponding `.sha256` checksum file.
+
+The archive may be installed directly:
+
+```sh
+sudo dokku plugin:install \
+  https://github.com/Yuribasov/dokku-vault/releases/download/v0.2.0/dokku-vault-v0.2.0.tar.gz \
+  --name vault-agent
+```
+
+Tarball installations do not retain a Git remote, so use the tagged Git installation shown above when you want to use `dokku plugin:update`.
 
 ## Development
 
