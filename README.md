@@ -75,6 +75,19 @@ Plugin updates run the same version check and build path:
 sudo dokku plugin:update vault-agent
 ```
 
+## Command help
+
+After installation, list commands or inspect one command in detail:
+
+```sh
+dokku vault-agent
+dokku vault-agent:help
+dokku vault-agent:help configure
+dokku vault-agent:help vault-agent:template:add
+```
+
+`COMMAND` may be supplied with or without the `vault-agent:` prefix.
+
 ## Initial configuration
 
 ### 1. Pin and configure Vault Agent

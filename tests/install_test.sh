@@ -56,9 +56,11 @@ STUB
 
 assert_links() {
   local plugin_dir=$1
-  local commands=(ca:clear ca:set configure disable enable render report role-id:set stage template:add template:clear-custom template:list template:remove template:set-custom)
+  local commands=(ca:clear ca:set configure disable enable help render report role-id:set stage template:add template:clear-custom template:list template:remove template:set-custom)
   local triggers=(post-app-clone-setup post-app-rename-setup post-deploy pre-delete pre-release-builder)
   local name
+  [[ -L "$plugin_dir/subcommands/default" ]] || { echo "missing default command link" >&2; return 1; }
+  [[ $(readlink "$plugin_dir/subcommands/default") == ../bin/dokku-vault-agent ]] || return 1
   for name in "${commands[@]}"; do
     [[ -L "$plugin_dir/subcommands/$name" ]] || { echo "missing command link: $name" >&2; return 1; }
     [[ $(readlink "$plugin_dir/subcommands/$name") == ../bin/dokku-vault-agent ]] || return 1

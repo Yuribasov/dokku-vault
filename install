@@ -16,6 +16,7 @@ COMMAND_NAMES=(
   configure
   disable
   enable
+  help
   render
   report
   role-id:set
@@ -46,6 +47,7 @@ build_with_host_go() {
 link_plugin_files() {
   local name
   mkdir -p "$PLUGIN_DIR/subcommands"
+  ln -sfn ../bin/dokku-vault-agent "$PLUGIN_DIR/subcommands/default"
   for name in "${COMMAND_NAMES[@]}"; do
     ln -sfn ../bin/dokku-vault-agent "$PLUGIN_DIR/subcommands/$name"
   done

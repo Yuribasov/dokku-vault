@@ -91,6 +91,13 @@ func (p *Plugin) checkUninstallSafe() error {
 
 func (p *Plugin) runCommand(action string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	switch action {
+	case "default":
+		if len(args) > 0 && args[0] == "vault-agent" {
+			args = args[1:]
+		}
+		return p.commandHelp(args, stdout)
+	case "help":
+		return p.commandHelp(args, stdout)
 	case "configure":
 		return p.commandConfigure(args, stdout, stderr)
 	case "ca:set":

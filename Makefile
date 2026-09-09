@@ -7,6 +7,7 @@ COMMANDS := \
 	configure \
 	disable \
 	enable \
+	help \
 	render \
 	report \
 	role-id:set \
@@ -32,6 +33,7 @@ build:
 
 link-files:
 	mkdir -p subcommands
+	ln -sfn ../$(PLUGIN_BINARY) subcommands/default
 	for command in $(COMMANDS); do ln -sfn ../$(PLUGIN_BINARY) "subcommands/$$command"; done
 	for trigger in $(TRIGGERS); do ln -sfn $(PLUGIN_BINARY) "$$trigger"; done
 

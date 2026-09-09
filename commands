@@ -2,9 +2,12 @@
 set -eo pipefail
 [[ ${DOKKU_TRACE:-} ]] && set -x
 
+PLUGIN_DIR=$(cd "$(dirname "$0")" && pwd)
+
 case "${1:-}" in
-  help | vault-agent:help)
+  help)
     cat <<'HELP'
+    vault-agent, Show Vault Agent commands and usage
     vault-agent:configure, Configure the Vault address and pinned Agent image
     vault-agent:ca:set, Read the Vault CA certificate from stdin
     vault-agent:ca:clear, Remove the configured Vault CA certificate
@@ -19,7 +22,15 @@ case "${1:-}" in
     vault-agent:stage <app>, Read a wrapped SecretID from stdin for the next release
     vault-agent:render <app>, Consume a staged credential and render immediately
     vault-agent:report [<app>], Display sanitized plugin configuration and readiness
+    vault-agent:help [command], Show general or command-specific Vault Agent help
 HELP
+    ;;
+  vault-agent)
+    exec "$PLUGIN_DIR/bin/dokku-vault-agent" command help
+    ;;
+  vault-agent:help)
+    shift
+    exec "$PLUGIN_DIR/bin/dokku-vault-agent" command help "$@"
     ;;
   *)
     exit "${DOKKU_NOT_IMPLEMENTED_EXIT:-10}"
