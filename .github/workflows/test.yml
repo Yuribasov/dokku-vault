@@ -52,7 +52,10 @@ jobs:
           go tool cover -func=coverage.out
 
       - name: Check shell syntax
-        run: bash -n install update uninstall commands
+        run: bash -n install update uninstall commands tests/install_test.sh
+
+      - name: Test installer build paths
+        run: tests/install_test.sh
 
       - name: Build static plugin binary
         run: make build

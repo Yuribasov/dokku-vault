@@ -10,6 +10,50 @@ DOCKER_BIN=${DOCKER_BIN:-docker}
 DEFAULT_BUILD_IMAGE='golang:1.26.5-alpine3.23@sha256:622e56dbc11a8cfe87cafa2331e9a201877271cbff918af53d3be315f3da88cc'
 BUILD_IMAGE=${DOKKU_VAULT_AGENT_BUILD_IMAGE:-$DEFAULT_BUILD_IMAGE}
 
+COMMAND_NAMES=(
+  ca:clear
+  ca:set
+  configure
+  disable
+  enable
+  render
+  report
+  role-id:set
+  stage
+  template:add
+  template:clear-custom
+  template:list
+  template:remove
+  template:set-custom
+)
+
+TRIGGER_NAMES=(
+  post-app-clone-setup
+  post-app-rename-setup
+  post-deploy
+  pre-delete
+  pre-release-builder
+)
+
+build_with_host_go() {
+  mkdir -p "$PLUGIN_DIR/bin"
+  (
+    cd "$PLUGIN_DIR"
+    CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o bin/dokku-vault-agent ./cmd/dokku-vault-agent
+  )
+}
+
+link_plugin_files() {
+  local name
+  mkdir -p "$PLUGIN_DIR/subcommands"
+  for name in "${COMMAND_NAMES[@]}"; do
+    ln -sfn ../bin/dokku-vault-agent "$PLUGIN_DIR/subcommands/$name"
+  done
+  for name in "${TRIGGER_NAMES[@]}"; do
+    ln -sfn bin/dokku-vault-agent "$PLUGIN_DIR/$name"
+  done
+}
+
 DOKKU_VERSION_OUTPUT=$("$DOKKU_BIN" version 2>/dev/null)
 DOKKU_VERSION=$(sed -n 's/.*version[[:space:]]\+v\?\([0-9][0-9.]*\).*/\1/p' <<<"$DOKKU_VERSION_OUTPUT")
 if [[ -z $DOKKU_VERSION ]] || [[ $(printf '%s\n' "$MINIMUM_DOKKU_VERSION" "$DOKKU_VERSION" | sort -V | head -n1) != "$MINIMUM_DOKKU_VERSION" ]]; then
@@ -22,7 +66,7 @@ if command -v go >/dev/null 2>&1; then
   HOST_GO_VERSION=$(go env GOVERSION 2>/dev/null | sed -n 's/^go\([0-9][0-9.]*\)$/\1/p')
 fi
 if [[ -n $HOST_GO_VERSION ]] && [[ $(printf '%s\n' "$MINIMUM_GO_VERSION" "$HOST_GO_VERSION" | sort -V | head -n1) == "$MINIMUM_GO_VERSION" ]]; then
-  make -C "$PLUGIN_DIR" links
+  build_with_host_go
 else
   if [[ -n $HOST_GO_VERSION ]]; then
     echo "-----> Host Go $HOST_GO_VERSION is older than required $MINIMUM_GO_VERSION; using pinned builder"
@@ -40,8 +84,9 @@ else
     --env GOMODCACHE=/tmp/go-mod-cache \
     "$BUILD_IMAGE" \
     sh -ec 'mkdir -p bin && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/dokku-vault-agent ./cmd/dokku-vault-agent'
-  make -C "$PLUGIN_DIR" link-files
 fi
+
+link_plugin_files
 
 "$PLUGIN_DIR/bin/dokku-vault-agent" internal install
 

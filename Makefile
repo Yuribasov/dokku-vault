@@ -39,6 +39,7 @@ links: build link-files
 
 test:
 	$(GO) test ./...
+	./tests/install_test.sh
 
 clean:
 	rm -rf bin subcommands $(TRIGGERS) coverage.out

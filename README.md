@@ -62,7 +62,7 @@ For a local checkout on the Dokku host:
 sudo dokku plugin:install file:///path/to/dokku-vault --name vault-agent
 ```
 
-Installation uses host Go only when it is version 1.25.13 or newer. Otherwise it builds with the digest-pinned image declared in `install`. To override that builder, supply another official, digest-pinned image:
+Installation uses host Go only when it is version 1.25.13 or newer. Otherwise it builds with the digest-pinned image declared in `install`. The installation path does not require `make`. To override the builder, supply another official, digest-pinned image:
 
 ```sh
 sudo env DOKKU_VAULT_AGENT_BUILD_IMAGE='golang:1.26.5-alpine3.23@sha256:YOUR_64_HEX_DIGEST' \
