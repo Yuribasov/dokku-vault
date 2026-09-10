@@ -73,7 +73,11 @@ func (p *Plugin) commandReport(args []string, stdout io.Writer) error {
 		}
 		fmt.Fprintf(stdout, "Expires at: %s\n", pending.ExpiresAt.Format(time.RFC3339))
 	} else if isNotExist(err) {
-		fmt.Fprintln(stdout, "Pending credential: none")
+		if exists(p.State.PendingTokenPath(app)) {
+			fmt.Fprintln(stdout, "Pending credential: incomplete")
+		} else {
+			fmt.Fprintln(stdout, "Pending credential: none")
+		}
 	} else {
 		return err
 	}

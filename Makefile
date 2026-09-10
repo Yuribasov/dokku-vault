@@ -44,6 +44,7 @@ links: build link-files
 test:
 	$(GO) test ./...
 	./tests/install_test.sh
+	./tests/uninstall_test.sh
 
 clean:
 	rm -rf bin subcommands $(BINARY_TRIGGERS) $(WRAPPER_TRIGGERS) coverage.out

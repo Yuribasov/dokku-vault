@@ -155,6 +155,8 @@ Ensure examples disable shell tracing around token handling and never place the 
 - Timeout tests prove the process is killed/reaped and named-container cleanup is attempted.
 - Ownership tests cover root-created state migrated to the Dokku UID/GID.
 - Missing-RoleID and installed-wrapper tests prove pre-release failures remain non-zero through the executable hook boundary.
+- Clone, rollback, and purge tests require exact named-storage unmount paths.
+- Legacy post-deploy migration, restrictive-umask publication, orphan-token cleanup, disabled staging, unknown commands, and partial uninstall each have regression coverage.
 
 ### Integration tests
 

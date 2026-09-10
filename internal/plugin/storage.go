@@ -235,7 +235,7 @@ func (p *Plugin) rollbackEnable(config AppConfig, mounted bool, cause error, env
 	dokku := executableFromEnv("DOKKU_BIN", "dokku")
 	var unmountErr error
 	if mounted {
-		if err := p.Runner.Run(CommandSpec{Name: dokku, Args: []string{"storage:unmount", config.AppName, config.StorageEntry}, Env: env, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
+		if err := p.Runner.Run(storageUnmountCommand(dokku, config, config.MountPath, env, io.Discard, io.Discard)); err != nil {
 			unmountErr = fmt.Errorf("rollback storage mount: %w", err)
 		}
 	}
@@ -297,7 +297,7 @@ func (p *Plugin) purgeAppLocked(app string, stdout, stderr io.Writer) error {
 		if err := p.State.SaveApp(config); err != nil {
 			return fmt.Errorf("record cleanup intent: %w", err)
 		}
-		if err := p.Runner.Run(CommandSpec{Name: dokku, Args: []string{"storage:unmount", app, config.StorageEntry}, Env: env, Stdout: stdout, Stderr: stderr}); err != nil {
+		if err := p.Runner.Run(storageUnmountCommand(dokku, config, config.MountPath, env, stdout, stderr)); err != nil {
 			fmt.Fprintf(stderr, "vault-agent: storage unmount did not succeed; continuing cleanup: %v\n", err)
 		}
 		if err := p.Runner.Run(CommandSpec{Name: dokku, Args: []string{"storage:destroy", config.StorageEntry, "--force"}, Env: env, Stdout: stdout, Stderr: stderr}); err != nil {

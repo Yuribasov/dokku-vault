@@ -55,6 +55,20 @@ func ensureGenerationStorage(livePath string) (string, error) {
 	return generation, nil
 }
 
+func ensureExistingGenerationStorage(livePath string) (string, error) {
+	info, err := os.Lstat(livePath)
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return currentGeneration(livePath)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("rendered storage path %s is neither a directory nor a symlink", livePath)
+	}
+	return ensureGenerationStorage(livePath)
+}
+
 func initializeGenerationStorage(livePath string) (string, error) {
 	root := generationsDir(livePath)
 	if err := os.MkdirAll(root, 0755); err != nil {

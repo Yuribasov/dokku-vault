@@ -21,7 +21,7 @@ func TestPurgeToleratesAttachmentAlreadyRemoved(t *testing.T) {
 	}}
 	plugin := newTestPlugin(root, runner)
 	config := AppConfig{
-		AppName: "sample", Enabled: true, StorageEntry: storageEntryName("sample"),
+		AppName: "sample", Enabled: true, MountPath: "/app/secrets", StorageEntry: storageEntryName("sample"),
 		TemplateMode: DefaultTemplateMode,
 	}
 	if err := plugin.State.SaveApp(config); err != nil {
@@ -33,8 +33,29 @@ func TestPurgeToleratesAttachmentAlreadyRemoved(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("expected unmount and destroy calls, got %d", calls)
 	}
+	if got := strings.Join(runner.specs[0].Args, " "); got != "storage:unmount sample "+config.StorageEntry+" --container-dir /app/secrets" {
+		t.Fatalf("purge used an ambiguous unmount command: %s", got)
+	}
 	if _, err := plugin.State.LoadApp("sample"); !isNotExist(err) {
 		t.Fatalf("app state still exists: %v", err)
+	}
+}
+
+func TestRollbackEnableUsesExactStorageAttachment(t *testing.T) {
+	runner := &fakeRunner{}
+	plugin := newTestPlugin(t.TempDir(), runner)
+	config := AppConfig{
+		AppName: "sample", MountPath: "/app/secrets", StorageEntry: storageEntryName("sample"),
+	}
+	err := plugin.rollbackEnable(config, true, errors.New("save failed"), nil)
+	if err == nil {
+		t.Fatal("rollback omitted the original failure")
+	}
+	if len(runner.specs) != 2 {
+		t.Fatalf("rollback made %d calls, want unmount and destroy", len(runner.specs))
+	}
+	if got := strings.Join(runner.specs[0].Args, " "); got != "storage:unmount sample "+config.StorageEntry+" --container-dir /app/secrets" {
+		t.Fatalf("rollback used an ambiguous unmount command: %s", got)
 	}
 }
 

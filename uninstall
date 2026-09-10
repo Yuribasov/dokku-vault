@@ -6,4 +6,25 @@ PLUGIN_DIR=$(cd "$(dirname "$0")" && pwd)
 PLUGIN_NAME=$(basename "$PLUGIN_DIR")
 
 [[ ${1:-} == "$PLUGIN_NAME" ]] || exit 0
-"$PLUGIN_DIR/bin/dokku-vault-agent" internal uninstall-check
+
+PLUGIN_BINARY="$PLUGIN_DIR/bin/dokku-vault-agent"
+if [[ ! -x $PLUGIN_BINARY ]]; then
+  DATA_ROOT=${DOKKU_VAULT_AGENT_DATA_ROOT:-/var/lib/dokku/data/vault-agent}
+  if [[ $DATA_ROOT != /* ]]; then
+    echo " !     refusing uninstall with invalid Vault Agent data root: $DATA_ROOT" >&2
+    exit 1
+  fi
+  for state_dir in "$DATA_ROOT/apps" "$DATA_ROOT/rendered"; do
+    if [[ -e $state_dir && ! -d $state_dir ]]; then
+      echo " !     refusing uninstall while unexpected Vault Agent state exists at $state_dir" >&2
+      exit 1
+    fi
+    if [[ -d $state_dir ]] && find "$state_dir" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+      echo " !     refusing uninstall while Vault Agent state exists under $state_dir" >&2
+      exit 1
+    fi
+  done
+  exit 0
+fi
+
+"$PLUGIN_BINARY" internal uninstall-check

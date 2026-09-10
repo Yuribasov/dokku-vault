@@ -4,8 +4,80 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
+
+func TestNestedPublishedDirectoriesIgnoreRestrictiveUmask(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.MkdirAll(filepath.Join(source, "nested"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "nested", "secret"), []byte("secret"), 0444); err != nil {
+		t.Fatal(err)
+	}
+	previousUmask := syscall.Umask(0077)
+	defer syscall.Umask(previousUmask)
+	live := filepath.Join(root, "rendered", "vault-sample")
+	if _, err := publishRenderedOutputs(source, live, []renderOutput{{Relative: "nested/secret", Perms: "0444"}}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(live, "nested"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0755 {
+		t.Fatalf("nested directory mode = %04o, want 0755", info.Mode().Perm())
+	}
+}
+
+func TestPostDeployMigratesExistingLegacyDirectory(t *testing.T) {
+	plugin := newTestPlugin(t.TempDir(), nil)
+	entry := storageEntryName("sample")
+	live := plugin.State.RenderedDir(entry)
+	if err := os.MkdirAll(live, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(live, "secret"), []byte("legacy"), 0444); err != nil {
+		t.Fatal(err)
+	}
+	config := AppConfig{AppName: "sample", Enabled: true, StorageEntry: entry, TemplateMode: DefaultTemplateMode}
+	if err := plugin.State.SaveApp(config); err != nil {
+		t.Fatal(err)
+	}
+	if err := plugin.triggerPostDeploy([]string{"sample"}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := plugin.State.LoadApp("sample")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ActiveGeneration == "" {
+		t.Fatal("post-deploy did not record the migrated generation")
+	}
+	if info, err := os.Lstat(live); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("legacy live directory was not migrated to a symlink: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(live, "secret")); err != nil || string(data) != "legacy" {
+		t.Fatalf("legacy secret was not preserved: %q, %v", data, err)
+	}
+}
+
+func TestPostDeployDoesNotInitializeMissingStorage(t *testing.T) {
+	plugin := newTestPlugin(t.TempDir(), nil)
+	entry := storageEntryName("sample")
+	config := AppConfig{AppName: "sample", Enabled: true, StorageEntry: entry, TemplateMode: DefaultTemplateMode}
+	if err := plugin.State.SaveApp(config); err != nil {
+		t.Fatal(err)
+	}
+	if err := plugin.triggerPostDeploy([]string{"sample"}, io.Discard); err == nil {
+		t.Fatal("post-deploy accepted missing rendered storage")
+	}
+	if exists(plugin.State.RenderedDir(entry)) {
+		t.Fatal("post-deploy initialized missing rendered storage")
+	}
+}
 
 func TestGenerationPublicationDoesNotExposePartialFileSet(t *testing.T) {
 	root := t.TempDir()

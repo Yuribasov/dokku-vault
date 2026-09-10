@@ -14,6 +14,9 @@ The complete implementation and the full-review repair series are committed. It 
 - retryable cleanup tombstones and explicit recovery from failed enable rollback;
 - bounded five-minute Agent execution with forced named-container cleanup;
 - app disable, delete, clone, transactional rename, successful-deploy generation promotion, and guarded plugin uninstall;
+- exact named-storage attachment removal during clone, rollback, and purge;
+- legacy rendered-directory migration during post-deploy and umask-independent nested output permissions;
+- orphaned-token cleanup, disabled-state staging rejection, and strict invalid-command failure;
 - HTTPS-only Vault endpoints and effective `docker-local` scheduler detection through `scheduler-detect`;
 - install/update ownership repair for state created by root while release hooks run as the Dokku user;
 - sanitized reports and manual rendering;
@@ -34,11 +37,19 @@ go test -race ./...
 go vet ./...
 go build ./cmd/dokku-vault-agent
 govulncheck ./...
-bash -n install update uninstall commands
+bash -n install update uninstall commands triggers/pre-release-builder tests/*.sh
+tests/install_test.sh
+tests/uninstall_test.sh
 git diff --check
 ```
 
-The suite includes a fake end-to-end release render, Git and source-image deployment binding, concurrent stage/render locking, cleanup failure and retry, rollback tombstones, atomic multi-file generation switching, legacy-directory migration, deployment generation promotion, timeout cleanup, root-to-Dokku ownership migration, rename failure safety, and uninstall refusal. It confirms the wrapping token is absent from Docker argv, validates hardening flags, consumes the credential, and rejects replay.
+The suite includes a fake end-to-end release render, Git and source-image deployment binding through the real pre-release entry point, concurrent stage/render locking, exact storage attachment cleanup, cleanup failure and retry, rollback tombstones, atomic multi-file generation switching, legacy-directory migration during post-deploy, restrictive-umask handling, orphan-token cleanup, timeout cleanup, root-to-Dokku ownership migration, rename failure safety, partial-install uninstall handling, and uninstall refusal. It confirms the wrapping token is absent from Docker argv, validates hardening flags, consumes the credential, and rejects replay.
+
+A source-only Claude Opus review was completed after commit `739cc35`.
+Confirmed findings were repaired and regression-tested. The suggested
+`DOKKU_BUILD_SOURCE=""` fallback was intentionally not adopted: Dokku 0.38.25
+exports this marker before nested release triggers, and failing closed prevents
+a stale source-image property from authorizing another deployment type.
 
 HashiCorp's current documentation confirms that `exit_after_auth = true` waits for configured templates to render before Vault Agent exits. Dokku's current documentation confirms the trigger argument order and named-storage command forms used here.
 

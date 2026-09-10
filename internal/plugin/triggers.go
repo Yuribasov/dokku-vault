@@ -46,10 +46,9 @@ func (p *Plugin) triggerPostClone(args []string, stdout, stderr io.Writer) error
 	}
 	env := commandEnvironment()
 	dokku := executableFromEnv("DOKKU_BIN", "dokku")
-	if err := p.Runner.Run(CommandSpec{
-		Name: dokku, Args: []string{"storage:unmount", destination, config.StorageEntry},
-		Env: env, Stdout: stdout, Stderr: stderr,
-	}); err != nil {
+	cloneConfig := config
+	cloneConfig.AppName = destination
+	if err := p.Runner.Run(storageUnmountCommand(dokku, cloneConfig, config.MountPath, env, stdout, stderr)); err != nil {
 		return fmt.Errorf("remove cloned Vault storage attachment: %w", err)
 	}
 	return nil
@@ -106,7 +105,7 @@ func (p *Plugin) triggerPostDeploy(args []string, stderr io.Writer) error {
 		return nil
 	}
 	livePath := p.State.RenderedDir(config.StorageEntry)
-	generation, err := currentGeneration(livePath)
+	generation, err := ensureExistingGenerationStorage(livePath)
 	if err != nil {
 		return fmt.Errorf("resolve deployed secret generation: %w", err)
 	}

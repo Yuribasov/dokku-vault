@@ -372,6 +372,11 @@ Keep shell tracing disabled for the entire wrapping and staging section. Never p
 
 Treat every failed deployment as consuming the credential. Generate and stage a new wrapped SecretID before retrying; staging a new credential replaces any old pending credential with a best-effort overwrite followed by unlink.
 
+Staging is rejected while an app is disabled or has incomplete cleanup. If a
+host interruption leaves a wrapping token without its metadata, `report`
+shows the credential as incomplete and the next render attempt securely removes
+the orphaned token.
+
 The local `--ttl-seconds` check is defense in depth. Vault independently enforces the response-wrapping TTL and SecretID TTL.
 
 ## Operations
@@ -418,7 +423,7 @@ Disable removes the attachment and named storage entry, pending credential, Role
 
 Cleanup is retryable. If Dokku cannot destroy the named storage entry, the command returns an error but retains a disabled cleanup tombstone, credentials, configuration, and rendered data. Fix the storage error and rerun `vault-agent:disable APP`; state is removed only after external storage and local secret cleanup both succeed.
 
-Dokku plugin uninstall is refused while any app integration or orphaned rendered-secret data remains. Disable every configured app successfully before running:
+Dokku plugin uninstall is refused while any app integration or orphaned rendered-secret data remains. This check also remains fail-closed when a partial installation has no plugin binary. Disable every configured app successfully before running:
 
 ```sh
 sudo dokku plugin:uninstall vault-agent
@@ -430,7 +435,7 @@ sudo dokku plugin:uninstall vault-agent
 - The token is never passed in Docker argv or environment.
 - Vault Agent runs with a read-only root filesystem, all capabilities dropped, `no-new-privileges`, a private `/tmp`, no Docker socket, and the Dokku UID/GID.
 - The Vault image reference must be an immutable `hashicorp/vault` digest.
-- Render outputs must be non-empty regular files with expected read-only modes. Symlinks and traversal are rejected.
+- Render outputs must be non-empty regular files with expected read-only modes. Symlinks and traversal are rejected, and nested publication directories are normalized to mode `0755` independently of the host umask.
 - Publication creates a complete immutable generation and atomically switches a relative symlink only after every file has been copied and validated. A successful deployment retains the current and immediately previous generations; failed-deploy retention is bounded to the active, pending, and two superseded generations.
 - App and global configuration mutations use stable host file locks with bounded acquisition waits. Staging cannot replace a credential while a render is consuming it, and disable/rename cannot remove a live lock inode. Rendering releases the global lock after snapshotting global configuration and CA data.
 - Vault Agent execution is bounded by the earlier of five minutes or the staged credential expiry. A timed-out named Agent container is force-removed through a separately bounded cleanup command.

@@ -40,6 +40,9 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 }
 
 func (p *Plugin) renderAppForDeployment(app string, stdout, stderr io.Writer) error {
+	// Dokku's build-capture setup exports this before invoking nested release
+	// triggers. Keep it separate from the persisted source-image property so a
+	// stale image value cannot authorize a Git or ps:rebuild deployment.
 	return p.renderAppWithInvocation(app, true, os.Getenv("DOKKU_BUILD_SOURCE"), stdout, stderr)
 }
 
@@ -59,11 +62,20 @@ func (p *Plugin) renderAppWithInvocation(app string, deployment bool, deployment
 	if !config.Enabled {
 		return fmt.Errorf("Vault Agent integration is disabled for %q", app)
 	}
+	if config.AppName != app {
+		return fmt.Errorf("stored configuration app %q does not match requested app %q", config.AppName, app)
+	}
 	if err := validateStorageEntry(config.StorageEntry); err != nil {
 		return err
 	}
+	if err := validateMountPath(config.MountPath); err != nil {
+		return fmt.Errorf("stored mount path: %w", err)
+	}
 	if err := validateAppRoleMount(config.AppRoleMount); err != nil {
 		return err
+	}
+	if err := validateRoleName(config.RoleName); err != nil {
+		return fmt.Errorf("stored role name: %w", err)
 	}
 	global, caCertificate, err := p.snapshotGlobalRenderConfiguration()
 	if err != nil {
@@ -248,7 +260,8 @@ func (p *Plugin) verifyStagedBinding(app string, credential StagedCredential, de
 func (p *Plugin) consumePending(app string) (StagedCredential, string, error) {
 	var credential StagedCredential
 	if err := readJSON(p.State.PendingMetadataPath(app), &credential); err != nil {
-		return credential, "", fmt.Errorf("no usable staged credential: %w", err)
+		cleanupErr := secureRemove(p.State.PendingTokenPath(app))
+		return credential, "", errors.Join(fmt.Errorf("no usable staged credential: %w", err), cleanupErr)
 	}
 	token, err := readCredentialFile(p.State.PendingTokenPath(app), "wrapping token")
 	if err != nil {
@@ -482,6 +495,9 @@ func secureMkdirParents(root, target string) error {
 			if err := os.Mkdir(current, 0755); err != nil {
 				return err
 			}
+			if err := os.Chmod(current, 0755); err != nil {
+				return err
+			}
 			continue
 		}
 		if err != nil {
@@ -489,6 +505,9 @@ func secureMkdirParents(root, target string) error {
 		}
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("render destination path component %q is not a directory", current)
+		}
+		if err := os.Chmod(current, 0755); err != nil {
+			return err
 		}
 	}
 	return nil

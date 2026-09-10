@@ -195,6 +195,82 @@ func TestStageRequiresExactlyOneImmutableDeploymentBinding(t *testing.T) {
 	}
 }
 
+func TestStageRejectsDisabledOrCleanupState(t *testing.T) {
+	tests := []AppConfig{
+		{AppName: "sample", Enabled: false, StorageEntry: storageEntryName("sample"), TemplateMode: DefaultTemplateMode},
+		{AppName: "sample", Enabled: true, CleanupPhase: cleanupPhasePending, StorageEntry: storageEntryName("sample"), TemplateMode: DefaultTemplateMode},
+	}
+	for _, config := range tests {
+		plugin := newTestPlugin(t.TempDir(), nil)
+		if err := plugin.State.SaveApp(config); err != nil {
+			t.Fatal(err)
+		}
+		err := plugin.commandStage(
+			[]string{"sample", "--revision", strings.Repeat("a", 40), "--ttl-seconds", "60"},
+			strings.NewReader("wrapped-token"),
+		)
+		if err == nil || !strings.Contains(err.Error(), "disabled or has incomplete cleanup") {
+			t.Fatalf("disabled state %#v returned unexpected result: %v", config, err)
+		}
+		if exists(plugin.State.PendingTokenPath("sample")) || exists(plugin.State.PendingMetadataPath("sample")) {
+			t.Fatal("disabled app retained staged credential files")
+		}
+	}
+}
+
+func TestMissingPendingMetadataRemovesOrphanedToken(t *testing.T) {
+	plugin := newTestPlugin(t.TempDir(), nil)
+	config := AppConfig{AppName: "sample", Enabled: true, StorageEntry: storageEntryName("sample"), TemplateMode: DefaultTemplateMode}
+	if err := plugin.State.SaveApp(config); err != nil {
+		t.Fatal(err)
+	}
+	tokenPath := plugin.State.PendingTokenPath("sample")
+	if err := writeFileAtomic(tokenPath, []byte("wrapped-token\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var report strings.Builder
+	if err := plugin.commandReport([]string{"sample"}, &report); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(report.String(), "Pending credential: incomplete") {
+		t.Fatalf("report hid orphaned token state:\n%s", report.String())
+	}
+	if _, _, err := plugin.consumePending("sample"); err == nil || !strings.Contains(err.Error(), "no usable staged credential") {
+		t.Fatalf("missing metadata returned unexpected result: %v", err)
+	}
+	if exists(tokenPath) {
+		t.Fatal("orphaned wrapping token remains after failed consumption")
+	}
+}
+
+func TestRenderRejectsInvalidPersistedIdentityAndMountFields(t *testing.T) {
+	base := AppConfig{
+		AppName: "sample", Enabled: true, MountPath: "/app/secrets", RoleName: "sample",
+		AppRoleMount: DefaultAppRoleMount, StorageEntry: storageEntryName("sample"), TemplateMode: DefaultTemplateMode,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*AppConfig)
+	}{
+		{name: "app-name", mutate: func(config *AppConfig) { config.AppName = "other" }},
+		{name: "mount-path", mutate: func(config *AppConfig) { config.MountPath = "../escape" }},
+		{name: "role-name", mutate: func(config *AppConfig) { config.RoleName = "role/../other" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			plugin := newTestPlugin(t.TempDir(), nil)
+			config := base
+			test.mutate(&config)
+			if err := plugin.State.SaveApp(config); err != nil {
+				t.Fatal(err)
+			}
+			if err := plugin.renderApp("sample", io.Discard, io.Discard); err == nil {
+				t.Fatal("render accepted invalid persisted configuration")
+			}
+		})
+	}
+}
+
 func TestVerifySourceImageBindingForImageDeployment(t *testing.T) {
 	sourceImage := "registry.example.test/team/sample@sha256:" + strings.Repeat("c", 64)
 	currentImage := sourceImage

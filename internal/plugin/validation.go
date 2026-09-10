@@ -73,7 +73,7 @@ func validateMountPath(value string) error {
 }
 
 func validateDestination(value string) error {
-	if value == "" || path.IsAbs(value) || path.Clean(value) != value || value == "." || strings.HasPrefix(value, "../") {
+	if value == "" || path.IsAbs(value) || path.Clean(value) != value || value == "." || value == ".." || strings.HasPrefix(value, "../") {
 		return fmt.Errorf("destination must be a normalized relative path without traversal")
 	}
 	return nil

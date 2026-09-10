@@ -53,7 +53,7 @@ func TestSecuritySensitiveValidation(t *testing.T) {
 	if err := validateMountPath("/app/secrets"); err != nil {
 		t.Fatalf("safe mount rejected: %v", err)
 	}
-	for _, destination := range []string{"", "/absolute", "../escape", "a/../../escape", "a/../b"} {
+	for _, destination := range []string{"", ".", "..", "/absolute", "../escape", "a/../../escape", "a/../b"} {
 		if validateDestination(destination) == nil {
 			t.Errorf("unsafe destination accepted: %q", destination)
 		}

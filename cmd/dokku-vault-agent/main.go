@@ -29,12 +29,24 @@ func main() {
 		mode, action, args = args[0], args[1], args[2:]
 	} else if plugin.IsTrigger(name) {
 		mode = "trigger"
-	} else if len(args) > 0 && strings.HasPrefix(args[0], "vault-agent:") {
-		args = args[1:]
+	} else {
+		action, args = commandInvocation(name, args)
 	}
 
 	if err := app.Run(mode, action, args, os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "vault-agent: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func commandInvocation(name string, args []string) (string, []string) {
+	action := name
+	if len(args) > 0 && strings.HasPrefix(args[0], "vault-agent:") {
+		requested := strings.TrimPrefix(args[0], "vault-agent:")
+		args = args[1:]
+		if name == "default" {
+			action = requested
+		}
+	}
+	return action, args
 }

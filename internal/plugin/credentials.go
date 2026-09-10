@@ -59,8 +59,12 @@ func (p *Plugin) commandStage(args []string, stdin io.Reader) error {
 		return err
 	}
 	defer unlockFile(lock)
-	if _, err := p.State.LoadApp(app); err != nil {
+	config, err := p.State.LoadApp(app)
+	if err != nil {
 		return fmt.Errorf("app integration is not enabled: %w", err)
+	}
+	if !config.Enabled || config.CleanupPhase != "" {
+		return fmt.Errorf("Vault Agent integration for %q is disabled or has incomplete cleanup", app)
 	}
 	if err := p.State.EnsureApp(app); err != nil {
 		return err
