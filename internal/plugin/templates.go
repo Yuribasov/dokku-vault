@@ -78,18 +78,29 @@ func (p *Plugin) commandTemplateAdd(args []string) error {
 	if config.TemplateMode == "custom" {
 		return fmt.Errorf("custom template mode is active; clear it before adding managed templates")
 	}
+	replacement := ManagedTemplate{
+		Name: name, SecretPath: secretPath, Field: field, Destination: destination, Decode: decode, Perms: perms,
+	}
+	templates := make([]ManagedTemplate, 0, len(config.Templates)+1)
+	replaced := false
 	for _, template := range config.Templates {
 		if template.Name == name {
-			return fmt.Errorf("template %q already exists", name)
+			if !replaced {
+				templates = append(templates, replacement)
+				replaced = true
+			}
+			continue
 		}
 		if template.Destination == destination {
 			return fmt.Errorf("destination %q is already used by template %q", destination, template.Name)
 		}
+		templates = append(templates, template)
+	}
+	if !replaced {
+		templates = append(templates, replacement)
 	}
 	config.TemplateMode = DefaultTemplateMode
-	config.Templates = append(config.Templates, ManagedTemplate{
-		Name: name, SecretPath: secretPath, Field: field, Destination: destination, Decode: decode, Perms: perms,
-	})
+	config.Templates = templates
 	sort.Slice(config.Templates, func(i, j int) bool { return config.Templates[i].Name < config.Templates[j].Name })
 	return p.State.SaveApp(config)
 }

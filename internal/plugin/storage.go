@@ -69,27 +69,17 @@ func (p *Plugin) commandEnable(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	defer unlockFile(lock)
-	if _, err := p.State.LoadApp(app); err == nil {
-		return fmt.Errorf("Vault Agent integration is already enabled for %q", app)
-	} else if !isNotExist(err) {
-		return err
+	existing, loadErr := p.State.LoadApp(app)
+	if loadErr != nil && !isNotExist(loadErr) {
+		return loadErr
 	}
 
 	env := commandEnvironment()
-	plugn := executableFromEnv("PLUGN_BIN", "plugn")
-	if err := p.Runner.Run(CommandSpec{Name: plugn, Args: []string{"trigger", "app-exists", app}, Env: env, Stdout: stdout, Stderr: stderr}); err != nil {
-		return fmt.Errorf("Dokku app %q does not exist: %w", app, err)
+	if err := p.requireDockerLocalApp(app, env, stdout, stderr); err != nil {
+		return err
 	}
-	selected, err := p.Runner.Output(CommandSpec{Name: plugn, Args: []string{"trigger", "scheduler-detect", app}, Env: env, Stderr: stderr})
-	if err != nil {
-		return fmt.Errorf("detect scheduler for %q: %w", app, err)
-	}
-	scheduler := strings.TrimSpace(string(selected))
-	if scheduler == "" {
-		return fmt.Errorf("detect scheduler for %q: Dokku returned an empty scheduler", app)
-	}
-	if scheduler != "docker-local" {
-		return fmt.Errorf("app %q uses unsupported scheduler %q; only docker-local is supported", app, scheduler)
+	if loadErr == nil {
+		return p.updateEnabledApp(app, existing, mountPath, roleName, approleMount, env, stdout, stderr)
 	}
 
 	entry := storageEntryName(app)
@@ -111,12 +101,132 @@ func (p *Plugin) commandEnable(args []string, stdout, stderr io.Writer) error {
 		removeErr := removeRenderedStorage(rendered)
 		return errors.Join(fmt.Errorf("create Dokku storage: %w", err), removeErr)
 	}
-	mount := CommandSpec{Name: dokku, Args: []string{"storage:mount", app, entry, "--container-dir", mountPath, "--phase", "deploy,run", "--volume-readonly"}, Env: env, Stdout: stdout, Stderr: stderr}
+	mount := storageMountCommand(dokku, config, mountPath, env, stdout, stderr)
 	if err := p.Runner.Run(mount); err != nil {
 		return p.rollbackEnable(config, false, fmt.Errorf("mount Dokku storage: %w", err), env)
 	}
 	if err := p.State.SaveApp(config); err != nil {
 		return p.rollbackEnable(config, true, err, env)
+	}
+	return nil
+}
+
+func (p *Plugin) requireDockerLocalApp(app string, env []string, stdout, stderr io.Writer) error {
+	plugn := executableFromEnv("PLUGN_BIN", "plugn")
+	if err := p.Runner.Run(CommandSpec{Name: plugn, Args: []string{"trigger", "app-exists", app}, Env: env, Stdout: stdout, Stderr: stderr}); err != nil {
+		return fmt.Errorf("Dokku app %q does not exist: %w", app, err)
+	}
+	selected, err := p.Runner.Output(CommandSpec{Name: plugn, Args: []string{"trigger", "scheduler-detect", app}, Env: env, Stderr: stderr})
+	if err != nil {
+		return fmt.Errorf("detect scheduler for %q: %w", app, err)
+	}
+	scheduler := strings.TrimSpace(string(selected))
+	if scheduler == "" {
+		return fmt.Errorf("detect scheduler for %q: Dokku returned an empty scheduler", app)
+	}
+	if scheduler != "docker-local" {
+		return fmt.Errorf("app %q uses unsupported scheduler %q; only docker-local is supported", app, scheduler)
+	}
+	return nil
+}
+
+func storageMountCommand(dokku string, config AppConfig, mountPath string, env []string, stdout, stderr io.Writer) CommandSpec {
+	return CommandSpec{
+		Name: dokku,
+		Args: []string{"storage:mount", config.AppName, config.StorageEntry, "--container-dir", mountPath, "--phase", "deploy,run", "--volume-readonly"},
+		Env:  env, Stdout: stdout, Stderr: stderr,
+	}
+}
+
+func storageUnmountCommand(dokku string, config AppConfig, mountPath string, env []string, stdout, stderr io.Writer) CommandSpec {
+	return CommandSpec{
+		Name: dokku,
+		Args: []string{"storage:unmount", config.AppName, config.StorageEntry, "--container-dir", mountPath},
+		Env:  env, Stdout: stdout, Stderr: stderr,
+	}
+}
+
+func (p *Plugin) updateEnabledApp(app string, config AppConfig, mountPath, roleName, approleMount string, env []string, stdout, stderr io.Writer) error {
+	if config.AppName != app {
+		return fmt.Errorf("stored configuration app %q does not match requested app %q", config.AppName, app)
+	}
+	if !config.Enabled || config.CleanupPhase != "" {
+		return fmt.Errorf("Vault Agent integration for %q has incomplete cleanup; run vault-agent:disable %s before enabling it again", app, app)
+	}
+	if err := validateStorageEntry(config.StorageEntry); err != nil {
+		return err
+	}
+	if err := validateMountPath(config.MountPath); err != nil {
+		return fmt.Errorf("stored mount path: %w", err)
+	}
+	mountChanged := config.MountPath != mountPath
+	authChanged := config.RoleName != roleName || config.AppRoleMount != approleMount
+	if !mountChanged && !authChanged {
+		return nil
+	}
+
+	dokku := executableFromEnv("DOKKU_BIN", "dokku")
+	if mountChanged {
+		if err := p.Runner.Run(storageMountCommand(dokku, config, mountPath, env, stdout, stderr)); err != nil {
+			return fmt.Errorf("mount updated Dokku storage: %w", err)
+		}
+		if err := p.Runner.Run(storageUnmountCommand(dokku, config, config.MountPath, env, stdout, stderr)); err != nil {
+			rollbackErr := p.rollbackMountPath(config, mountPath, env)
+			return errors.Join(fmt.Errorf("unmount previous Dokku storage attachment: %w", err), rollbackErr)
+		}
+	}
+
+	if authChanged {
+		if err := p.removeAppRoleState(app); err != nil {
+			rollbackErr := p.rollbackMountPathIfChanged(config, mountPath, mountChanged, env)
+			return errors.Join(fmt.Errorf("remove stale AppRole state after identity update: %w", err), rollbackErr)
+		}
+	}
+	previous := config
+	config.MountPath = mountPath
+	config.RoleName = roleName
+	config.AppRoleMount = approleMount
+	if err := p.State.SaveApp(config); err != nil {
+		rollbackErr := p.rollbackMountPathIfChanged(previous, mountPath, mountChanged, env)
+		return errors.Join(err, rollbackErr)
+	}
+	return nil
+}
+
+func (p *Plugin) removeAppRoleState(app string) error {
+	if err := p.removePendingCredential(app); err != nil {
+		return err
+	}
+	if err := os.Remove(p.State.RoleIDPath(app)); err != nil && !isNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (p *Plugin) removePendingCredential(app string) error {
+	if err := secureRemove(p.State.PendingTokenPath(app)); err != nil {
+		return err
+	}
+	if err := os.Remove(p.State.PendingMetadataPath(app)); err != nil && !isNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (p *Plugin) rollbackMountPathIfChanged(config AppConfig, updatedMountPath string, mountChanged bool, env []string) error {
+	if !mountChanged {
+		return nil
+	}
+	return p.rollbackMountPath(config, updatedMountPath, env)
+}
+
+func (p *Plugin) rollbackMountPath(config AppConfig, updatedMountPath string, env []string) error {
+	dokku := executableFromEnv("DOKKU_BIN", "dokku")
+	if err := p.Runner.Run(storageMountCommand(dokku, config, config.MountPath, env, io.Discard, io.Discard)); err != nil {
+		return fmt.Errorf("restore previous storage mount: %w", err)
+	}
+	if err := p.Runner.Run(storageUnmountCommand(dokku, config, updatedMountPath, env, io.Discard, io.Discard)); err != nil {
+		return fmt.Errorf("remove updated storage mount: %w", err)
 	}
 	return nil
 }

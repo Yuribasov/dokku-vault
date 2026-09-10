@@ -33,11 +33,14 @@ Implement these public commands:
   - Create a plugin-owned rendered directory and named Dokku storage entry.
   - Mount it read-only into deploy and run containers at the requested absolute path.
   - Reject `/`, `/proc`, `/sys`, and `/dev` mount targets.
+  - Repeating the command updates mount and AppRole parameters; unchanged input is a no-op.
+  - Changing AppRole parameters removes the previous RoleID and invalidates any staged credential.
 - `vault-agent:role-id:set APP`
   - Read the persistent, non-secret AppRole RoleID from stdin.
 - `vault-agent:template:add APP NAME --secret-path PATH --field FIELD --destination FILE [--decode base64|none] [--perms 0444]`
   - Add a managed file mapping. Default decoding is `base64`; default permissions are `0444`.
   - Permit only relative, traversal-free destinations and modes `0400`, `0440`, or `0444`.
+  - Repeating an existing template name updates that mapping while preserving destination uniqueness.
 - `vault-agent:template:list APP` and `vault-agent:template:remove APP NAME`.
 - `vault-agent:template:set-custom APP [--replace]`
   - Read custom template-only HCL from stdin.

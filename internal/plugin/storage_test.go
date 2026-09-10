@@ -104,6 +104,197 @@ func TestEnableRejectsUnsupportedOrMissingScheduler(t *testing.T) {
 	}
 }
 
+func TestEnableIsIdempotentForExistingConfiguration(t *testing.T) {
+	runner := &fakeRunner{outputFn: func(CommandSpec) ([]byte, error) {
+		return []byte("docker-local\n"), nil
+	}}
+	plugin := newTestPlugin(t.TempDir(), runner)
+	config := AppConfig{
+		AppName: "sample", Enabled: true, MountPath: "/app/secrets", RoleName: "sample-role",
+		AppRoleMount: DefaultAppRoleMount, StorageEntry: storageEntryName("sample"), TemplateMode: DefaultTemplateMode,
+	}
+	if err := plugin.State.SaveApp(config); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := plugin.commandEnable([]string{
+		"sample", "--mount-path", "/app/secrets", "--role-name", "sample-role",
+	}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("repeated enable failed: %v", err)
+	}
+	if len(runner.specs) != 2 {
+		t.Fatalf("repeated enable should only validate the app and scheduler, got %d calls", len(runner.specs))
+	}
+	loaded, err := plugin.State.LoadApp("sample")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.MountPath != config.MountPath || loaded.RoleName != config.RoleName || loaded.AppRoleMount != config.AppRoleMount {
+		t.Fatalf("idempotent enable changed configuration: %#v", loaded)
+	}
+}
+
+func TestEnableUpdatesExistingConfiguration(t *testing.T) {
+	runner := &fakeRunner{outputFn: func(CommandSpec) ([]byte, error) {
+		return []byte("docker-local\n"), nil
+	}}
+	plugin := newTestPlugin(t.TempDir(), runner)
+	config := AppConfig{
+		AppName: "sample", Enabled: true, MountPath: "/app/old-secrets", RoleName: "old-role",
+		AppRoleMount: DefaultAppRoleMount, StorageEntry: storageEntryName("sample"), TemplateMode: DefaultTemplateMode,
+	}
+	if err := plugin.State.SaveApp(config); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(plugin.State.PendingTokenPath("sample"), []byte("wrapped-token\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(plugin.State.PendingMetadataPath("sample"), StagedCredential{}, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(plugin.State.RoleIDPath("sample"), []byte("old-role-id\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := plugin.commandEnable([]string{
+		"sample", "--mount-path", "/app/new-secrets", "--role-name", "new-role",
+		"--approle-mount", "auth/apps",
+	}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("enable update failed: %v", err)
+	}
+	if len(runner.specs) != 4 {
+		t.Fatalf("expected app check, scheduler check, new mount, and old unmount; got %d calls", len(runner.specs))
+	}
+	mount := strings.Join(runner.specs[2].Args, " ")
+	unmount := strings.Join(runner.specs[3].Args, " ")
+	if !strings.Contains(mount, "storage:mount sample "+config.StorageEntry+" --container-dir /app/new-secrets") {
+		t.Fatalf("unexpected updated mount command: %s", mount)
+	}
+	if !strings.Contains(unmount, "storage:unmount sample "+config.StorageEntry+" --container-dir /app/old-secrets") {
+		t.Fatalf("unexpected previous unmount command: %s", unmount)
+	}
+	loaded, err := plugin.State.LoadApp("sample")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.MountPath != "/app/new-secrets" || loaded.RoleName != "new-role" || loaded.AppRoleMount != "auth/apps" {
+		t.Fatalf("configuration was not updated: %#v", loaded)
+	}
+	if exists(plugin.State.PendingTokenPath("sample")) || exists(plugin.State.PendingMetadataPath("sample")) {
+		t.Fatal("AppRole update retained a staged credential for the old response-wrapping path")
+	}
+	if exists(plugin.State.RoleIDPath("sample")) {
+		t.Fatal("AppRole update retained the old role's RoleID")
+	}
+}
+
+func TestEnableAppRoleOnlyUpdateDoesNotRemountStorage(t *testing.T) {
+	runner := &fakeRunner{outputFn: func(CommandSpec) ([]byte, error) {
+		return []byte("docker-local\n"), nil
+	}}
+	plugin := newTestPlugin(t.TempDir(), runner)
+	config := AppConfig{
+		AppName: "sample", Enabled: true, MountPath: "/app/secrets", RoleName: "old-role",
+		AppRoleMount: DefaultAppRoleMount, StorageEntry: storageEntryName("sample"), TemplateMode: DefaultTemplateMode,
+	}
+	if err := plugin.State.SaveApp(config); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(plugin.State.RoleIDPath("sample"), []byte("old-role-id\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := plugin.commandEnable([]string{
+		"sample", "--mount-path", "/app/secrets", "--role-name", "new-role",
+	}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("AppRole-only enable update failed: %v", err)
+	}
+	if len(runner.specs) != 2 {
+		t.Fatalf("AppRole-only update should not mutate storage, got %d calls", len(runner.specs))
+	}
+	loaded, err := plugin.State.LoadApp("sample")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.RoleName != "new-role" {
+		t.Fatalf("role name was not updated: %#v", loaded)
+	}
+	if exists(plugin.State.RoleIDPath("sample")) {
+		t.Fatal("AppRole-only update retained the old role's RoleID")
+	}
+}
+
+func TestEnableMountUpdateRollsBackWhenPreviousUnmountFails(t *testing.T) {
+	runner := &fakeRunner{
+		outputFn: func(CommandSpec) ([]byte, error) { return []byte("docker-local\n"), nil },
+		runFn: func(spec CommandSpec) error {
+			joined := strings.Join(spec.Args, " ")
+			if strings.Contains(joined, "storage:unmount") && strings.Contains(joined, "--container-dir /app/old-secrets") {
+				return errors.New("unmount rejected")
+			}
+			return nil
+		},
+	}
+	plugin := newTestPlugin(t.TempDir(), runner)
+	config := AppConfig{
+		AppName: "sample", Enabled: true, MountPath: "/app/old-secrets", RoleName: "sample-role",
+		AppRoleMount: DefaultAppRoleMount, StorageEntry: storageEntryName("sample"), TemplateMode: DefaultTemplateMode,
+	}
+	if err := plugin.State.SaveApp(config); err != nil {
+		t.Fatal(err)
+	}
+
+	err := plugin.commandEnable([]string{
+		"sample", "--mount-path", "/app/new-secrets", "--role-name", "sample-role",
+	}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "unmount previous") {
+		t.Fatalf("unexpected mount update result: %v", err)
+	}
+	if len(runner.specs) != 6 {
+		t.Fatalf("expected validation, update, and two rollback calls; got %d calls", len(runner.specs))
+	}
+	restore := strings.Join(runner.specs[4].Args, " ")
+	remove := strings.Join(runner.specs[5].Args, " ")
+	if !strings.Contains(restore, "storage:mount sample "+config.StorageEntry+" --container-dir /app/old-secrets") {
+		t.Fatalf("previous mount was not restored: %s", restore)
+	}
+	if !strings.Contains(remove, "storage:unmount sample "+config.StorageEntry+" --container-dir /app/new-secrets") {
+		t.Fatalf("updated mount was not rolled back: %s", remove)
+	}
+	loaded, loadErr := plugin.State.LoadApp("sample")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if loaded.MountPath != config.MountPath {
+		t.Fatalf("failed update changed stored mount path to %q", loaded.MountPath)
+	}
+}
+
+func TestEnableDoesNotReviveCleanupTombstone(t *testing.T) {
+	runner := &fakeRunner{outputFn: func(CommandSpec) ([]byte, error) {
+		return []byte("docker-local\n"), nil
+	}}
+	plugin := newTestPlugin(t.TempDir(), runner)
+	config := AppConfig{
+		AppName: "sample", Enabled: false, CleanupPhase: cleanupPhasePending,
+		MountPath: "/app/secrets", RoleName: "sample-role", AppRoleMount: DefaultAppRoleMount,
+		StorageEntry: storageEntryName("sample"), TemplateMode: DefaultTemplateMode,
+	}
+	if err := plugin.State.SaveApp(config); err != nil {
+		t.Fatal(err)
+	}
+
+	err := plugin.commandEnable([]string{
+		"sample", "--mount-path", "/app/new-secrets", "--role-name", "new-role",
+	}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "incomplete cleanup") {
+		t.Fatalf("cleanup tombstone returned unexpected result: %v", err)
+	}
+	if len(runner.specs) != 2 {
+		t.Fatalf("cleanup tombstone should not mutate storage, got %d calls", len(runner.specs))
+	}
+}
+
 func TestPurgeRetainsStateAndSecretsUntilStorageDestroyCanBeRetried(t *testing.T) {
 	destroyAttempts := 0
 	runner := &fakeRunner{runFn: func(spec CommandSpec) error {

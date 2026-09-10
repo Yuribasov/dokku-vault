@@ -127,6 +127,12 @@ sudo dokku vault-agent:enable myapp \
 
 This creates a deterministic named storage entry backed by a plugin-owned host directory. The mount path must be absolute and normalized; `/`, `/proc`, `/sys`, and `/dev` are rejected.
 
+Running `vault-agent:enable` again for an enabled app updates its mount path,
+AppRole name, and AppRole mount. An unchanged command is a no-op after Dokku
+validation. Changing the AppRole name or mount clears the stored RoleID and any
+staged credential. Set the matching RoleID again and stage a newly wrapped
+SecretID before deploying.
+
 Set the AppRole RoleID over stdin. The RoleID is persistent and is not treated as a secret, but the plugin still stores it with mode `0600`:
 
 ```sh
@@ -160,6 +166,9 @@ The application then sees:
 /app/runtime-secrets/mongodb/client.jks
 /app/runtime-secrets/mongodb/mongodb.properties
 ```
+
+Repeating `vault-agent:template:add` with the same template name updates the
+mapping. Destinations must still be unique across differently named templates.
 
 Destinations are relative, traversal-free paths. Allowed modes are `0400`, `0440`, and `0444`. Application containers commonly need `0444` because their runtime UID may differ from the Dokku host UID.
 

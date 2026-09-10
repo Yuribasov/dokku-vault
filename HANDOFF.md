@@ -17,6 +17,7 @@ The complete implementation and the full-review repair series are committed. It 
 - HTTPS-only Vault endpoints and effective `docker-local` scheduler detection through `scheduler-detect`;
 - install/update ownership repair for state created by root while release hooks run as the Dokku user;
 - sanitized reports and manual rendering;
+- idempotent enable and managed-template upserts, including rollback-protected mount-path replacement;
 - a containerized, digest-pinned Go build fallback, a patched Go 1.25.13 minimum, vendored dependencies, and a clean `govulncheck` result;
 - unit tests, race-detector verification, and operator documentation in [README.md](README.md);
 - GitHub Actions verification and gated, checksummed release automation.
