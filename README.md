@@ -38,6 +38,10 @@ The plugin stores state under `/var/lib/dokku/data/vault-agent`. Application sec
 
 Any failure aborts the new Dokku release. Per-file publication never changes the currently running containers, and an incomplete generation is never exposed through the live storage path. Repeated failed deployments retain the active and latest pending generations plus at most two superseded generations; older secret generations are removed after each successful render.
 
+The installed `pre-release-builder` wrapper preserves every renderer failure as
+a non-zero hook status and prints an explicit deployment-aborted message. A
+missing RoleID therefore stops the release before Dokku schedules new containers.
+
 A staged credential is single-attempt. A retry requires a newly wrapped SecretID.
 
 ## Installation
@@ -293,6 +297,9 @@ unset WRAPPING_TOKEN
 
 git push "dokku@${DOKKU_HOST}:${APP}" HEAD:master
 ```
+
+The Git push returns non-zero when pre-release validation fails. Deployment
+automation must propagate that status and must not mask it with `|| true`.
 
 Keep shell tracing disabled for the entire wrapping and staging section. Never place a wrapping token or SecretID in:
 

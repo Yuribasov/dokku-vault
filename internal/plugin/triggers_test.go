@@ -1,9 +1,38 @@
 package plugin
 
 import (
+	"io"
 	"os"
+	"strings"
 	"testing"
 )
+
+func TestPreReleaseBuilderFailsWhenRoleIDIsMissing(t *testing.T) {
+	plugin := newTestPlugin(t.TempDir(), nil)
+	global := GlobalConfig{
+		VaultAddress: "https://vault.example.test",
+		Image:        "hashicorp/vault:1.20.2@sha256:" + strings.Repeat("a", 64),
+	}
+	if err := plugin.State.SaveGlobal(global); err != nil {
+		t.Fatal(err)
+	}
+	config := AppConfig{
+		AppName: "sample", Enabled: true, MountPath: "/app/secrets", RoleName: "sample",
+		AppRoleMount: DefaultAppRoleMount, StorageEntry: storageEntryName("sample"), TemplateMode: DefaultTemplateMode,
+	}
+	if err := plugin.State.SaveApp(config); err != nil {
+		t.Fatal(err)
+	}
+
+	err := plugin.triggerPreReleaseBuilder(
+		[]string{"dockerfile", "sample", "sample-image"},
+		io.Discard,
+		io.Discard,
+	)
+	if err == nil || !strings.Contains(err.Error(), "RoleID is not configured") {
+		t.Fatalf("missing RoleID returned unexpected result: %v", err)
+	}
+}
 
 func TestPostRenameUpdatesConfigurationInsideRenamedState(t *testing.T) {
 	plugin := newTestPlugin(t.TempDir(), nil)

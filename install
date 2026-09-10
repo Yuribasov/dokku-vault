@@ -28,12 +28,11 @@ COMMAND_NAMES=(
   template:set-custom
 )
 
-TRIGGER_NAMES=(
+BINARY_TRIGGER_NAMES=(
   post-app-clone-setup
   post-app-rename-setup
   post-deploy
   pre-delete
-  pre-release-builder
 )
 
 build_with_host_go() {
@@ -51,9 +50,10 @@ link_plugin_files() {
   for name in "${COMMAND_NAMES[@]}"; do
     ln -sfn ../bin/dokku-vault-agent "$PLUGIN_DIR/subcommands/$name"
   done
-  for name in "${TRIGGER_NAMES[@]}"; do
+  for name in "${BINARY_TRIGGER_NAMES[@]}"; do
     ln -sfn bin/dokku-vault-agent "$PLUGIN_DIR/$name"
   done
+  ln -sfn triggers/pre-release-builder "$PLUGIN_DIR/pre-release-builder"
 }
 
 DOKKU_VERSION_OUTPUT=$("$DOKKU_BIN" version 2>/dev/null)

@@ -16,11 +16,17 @@ AGENT_STUB="$TEST_ROOT/agent-stub"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$AGENT_STUB"
 chmod +x "$AGENT_STUB"
 
+AGENT_FAIL_STUB="$TEST_ROOT/agent-fail-stub"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 42' >"$AGENT_FAIL_STUB"
+chmod +x "$AGENT_FAIL_STUB"
+
 prepare_case() {
   local case_dir=$1
-  mkdir -p "$case_dir/plugin" "$case_dir/stubs"
+  mkdir -p "$case_dir/plugin/triggers" "$case_dir/stubs"
   cp "$REPO_ROOT/install" "$case_dir/plugin/install"
+  cp "$REPO_ROOT/triggers/pre-release-builder" "$case_dir/plugin/triggers/pre-release-builder"
   chmod +x "$case_dir/plugin/install"
+  chmod +x "$case_dir/plugin/triggers/pre-release-builder"
   printf '%s\n' '#!/usr/bin/env bash' 'printf "dokku version 0.38.25\\n"' >"$case_dir/stubs/dokku"
   chmod +x "$case_dir/stubs/dokku"
   printf '%s\n' '#!/usr/bin/env bash' 'echo "make must not be called" >&2' 'exit 93' >"$case_dir/stubs/make"
@@ -57,7 +63,7 @@ STUB
 assert_links() {
   local plugin_dir=$1
   local commands=(ca:clear ca:set configure disable enable help render report role-id:set stage template:add template:clear-custom template:list template:remove template:set-custom)
-  local triggers=(post-app-clone-setup post-app-rename-setup post-deploy pre-delete pre-release-builder)
+  local triggers=(post-app-clone-setup post-app-rename-setup post-deploy pre-delete)
   local name
   [[ -L "$plugin_dir/subcommands/default" ]] || { echo "missing default command link" >&2; return 1; }
   [[ $(readlink "$plugin_dir/subcommands/default") == ../bin/dokku-vault-agent ]] || return 1
@@ -69,13 +75,41 @@ assert_links() {
     [[ -L "$plugin_dir/$name" ]] || { echo "missing trigger link: $name" >&2; return 1; }
     [[ $(readlink "$plugin_dir/$name") == bin/dokku-vault-agent ]] || return 1
   done
+  [[ -L "$plugin_dir/pre-release-builder" ]] || { echo "missing pre-release-builder wrapper link" >&2; return 1; }
+  [[ $(readlink "$plugin_dir/pre-release-builder") == triggers/pre-release-builder ]] || return 1
+  [[ -x "$plugin_dir/pre-release-builder" ]] || { echo "pre-release-builder wrapper is not executable" >&2; return 1; }
+}
+
+assert_pre_release_failure() {
+  local plugin_dir=$1
+  local stderr_path="$TEST_ROOT/pre-release.stderr"
+  local status=0
+
+  "$plugin_dir/pre-release-builder" dockerfile sample sample-image >/dev/null 2>&1
+  cp "$AGENT_FAIL_STUB" "$plugin_dir/bin/dokku-vault-agent"
+  if "$plugin_dir/pre-release-builder" dockerfile sample sample-image 2>"$stderr_path"; then
+    echo "pre-release-builder swallowed the Agent failure" >&2
+    return 1
+  else
+    status=$?
+  fi
+  if [[ $status -ne 42 ]]; then
+    echo "pre-release-builder returned $status, expected 42" >&2
+    return 1
+  fi
+  if ! grep -Fq "Vault Agent pre-release validation failed; aborting deployment" "$stderr_path"; then
+    echo "pre-release-builder omitted the fatal deployment message" >&2
+    return 1
+  fi
 }
 
 host_case="$TEST_ROOT/host-go"
 prepare_case "$host_case"
 write_go_stub "$host_case/stubs/go"
+ln -s bin/dokku-vault-agent "$host_case/plugin/pre-release-builder"
 env PATH="$host_case/stubs:/usr/bin:/bin" TEST_GO_VERSION=1.25.13 TEST_AGENT_STUB="$AGENT_STUB" DOKKU_BIN=dokku "$host_case/plugin/install" >/dev/null
 assert_links "$host_case/plugin"
+assert_pre_release_failure "$host_case/plugin"
 
 docker_case="$TEST_ROOT/docker"
 prepare_case "$docker_case"
@@ -90,4 +124,4 @@ chmod +x "$docker_case/stubs/docker"
 env PATH="$docker_case/stubs:/usr/bin:/bin" TEST_GO_VERSION=1.24.0 TEST_AGENT_STUB="$AGENT_STUB" TEST_PLUGIN_DIR="$docker_case/plugin" DOKKU_BIN=dokku DOCKER_BIN=docker "$docker_case/plugin/install" >/dev/null
 assert_links "$docker_case/plugin"
 
-printf 'make-free installer tests passed\n'
+printf 'installer and hook tests passed\n'

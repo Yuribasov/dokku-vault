@@ -5,7 +5,7 @@
 The complete implementation and the full-review repair series are committed. It includes:
 
 - a normal Dokku plugin dispatcher, subcommands, triggers, install and update hooks;
-- digest-pinned one-shot Vault Agent rendering in `pre-release-builder`;
+- digest-pinned one-shot Vault Agent rendering with explicit non-zero failure propagation from `pre-release-builder`;
 - per-app named read-only storage for `docker-local`;
 - response-wrapped credential staging over stdin, exact Git revision binding, TTL checks, and one-attempt consumption;
 - managed multi-file KV v2 templates and validated custom template-only HCL;

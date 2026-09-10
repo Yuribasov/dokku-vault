@@ -74,6 +74,7 @@ Use the documented `dokku storage:create|mount|unmount|destroy` CLI only from ex
 
 - Package one static Go dispatcher binary with command and trigger symlinks, `plugin.toml`, help output, install/update hooks, and vendored dependencies. Build during installation with a digest-pinned Go 1.26 builder image.
 - Register `pre-release-builder BUILDER_TYPE APP IMAGE`.
+  - Preserve renderer failures through an explicit shell boundary so Dokku aborts the release with a non-zero status and a clear fatal message.
   - Return immediately for apps without enabled integration.
   - Acquire an app-specific file lock.
   - Require complete global/app configuration and a non-expired staged token.
@@ -152,6 +153,7 @@ Ensure examples disable shell tracing around token handling and never place the 
 - Generation tests prove a failed multi-file copy does not change the live generation.
 - Timeout tests prove the process is killed/reaped and named-container cleanup is attempted.
 - Ownership tests cover root-created state migrated to the Dokku UID/GID.
+- Missing-RoleID and installed-wrapper tests prove pre-release failures remain non-zero through the executable hook boundary.
 
 ### Integration tests
 

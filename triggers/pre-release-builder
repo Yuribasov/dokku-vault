@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ ${DOKKU_TRACE:-} ]] && set -x
+
+PLUGIN_DIR=$(cd "$(dirname "$0")" && pwd)
+
+if "$PLUGIN_DIR/bin/dokku-vault-agent" trigger pre-release-builder "$@"; then
+  exit 0
+else
+  status=$?
+fi
+
+# Make the release boundary unambiguous to both Dokku and deployment logs.
+echo " !     Vault Agent pre-release validation failed; aborting deployment" >&2
+exit "$status"
