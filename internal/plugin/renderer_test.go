@@ -141,6 +141,96 @@ func TestStageReplacesTokenWithoutReportingIt(t *testing.T) {
 	}
 }
 
+func TestStageAcceptsImmutableSourceImageAndReportsBinding(t *testing.T) {
+	plugin := newTestPlugin(t.TempDir(), nil)
+	config := AppConfig{AppName: "sample", Enabled: true, StorageEntry: storageEntryName("sample"), TemplateMode: DefaultTemplateMode}
+	if err := plugin.State.SaveApp(config); err != nil {
+		t.Fatal(err)
+	}
+	sourceImage := "registry.example.test/team/sample:build-42@sha256:" + strings.Repeat("a", 64)
+	if err := plugin.commandStage(
+		[]string{"sample", "--source-image", sourceImage, "--ttl-seconds", "60"},
+		strings.NewReader("wrapped-token"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	var credential StagedCredential
+	if err := readJSON(plugin.State.PendingMetadataPath("sample"), &credential); err != nil {
+		t.Fatal(err)
+	}
+	if credential.SourceImage != sourceImage || credential.Revision != "" {
+		t.Fatalf("staged binding = %#v, want source image %q", credential, sourceImage)
+	}
+	var report strings.Builder
+	if err := plugin.commandReport([]string{"sample"}, &report); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(report.String(), "Expected source image: "+sourceImage) || strings.Contains(report.String(), "Expected revision:") {
+		t.Fatalf("report returned unexpected source-image binding:\n%s", report.String())
+	}
+}
+
+func TestStageRequiresExactlyOneImmutableDeploymentBinding(t *testing.T) {
+	plugin := newTestPlugin(t.TempDir(), nil)
+	config := AppConfig{AppName: "sample", Enabled: true, StorageEntry: storageEntryName("sample"), TemplateMode: DefaultTemplateMode}
+	if err := plugin.State.SaveApp(config); err != nil {
+		t.Fatal(err)
+	}
+	revision := strings.Repeat("a", 40)
+	digestImage := "registry.example.test/team/sample@sha256:" + strings.Repeat("b", 64)
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "neither", args: []string{"sample", "--ttl-seconds", "60"}},
+		{name: "both", args: []string{"sample", "--revision", revision, "--source-image", digestImage, "--ttl-seconds", "60"}},
+		{name: "mutable-image", args: []string{"sample", "--source-image", "registry.example.test/team/sample:latest", "--ttl-seconds", "60"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := plugin.commandStage(test.args, strings.NewReader("wrapped-token")); err == nil {
+				t.Fatal("invalid deployment binding was accepted")
+			}
+		})
+	}
+}
+
+func TestVerifySourceImageBindingForImageDeployment(t *testing.T) {
+	sourceImage := "registry.example.test/team/sample@sha256:" + strings.Repeat("c", 64)
+	currentImage := sourceImage
+	runner := &fakeRunner{outputFn: func(spec CommandSpec) ([]byte, error) {
+		if strings.Join(spec.Args, " ") != "trigger git-get-property sample source-image" {
+			return nil, fmt.Errorf("unexpected output command: %v", spec.Args)
+		}
+		return []byte(currentImage + "\n"), nil
+	}}
+	plugin := newTestPlugin(t.TempDir(), runner)
+	credential := StagedCredential{SourceImage: sourceImage}
+	if err := plugin.verifyStagedBinding("sample", credential, true, "git:from-image", io.Discard); err != nil {
+		t.Fatalf("matching git:from-image binding failed: %v", err)
+	}
+	if err := plugin.verifyStagedBinding("sample", credential, true, "git:load-image", io.Discard); err != nil {
+		t.Fatalf("matching git:load-image binding failed: %v", err)
+	}
+	err := plugin.verifyStagedBinding("sample", credential, true, "git-hook", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "requires git:from-image or git:load-image") {
+		t.Fatalf("source-image credential accepted for Git deployment: %v", err)
+	}
+	currentImage = "registry.example.test/team/sample@sha256:" + strings.Repeat("d", 64)
+	err = plugin.verifyStagedBinding("sample", credential, true, "git:from-image", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "does not match current source image") {
+		t.Fatalf("mismatched source image was accepted: %v", err)
+	}
+	for _, invalid := range []StagedCredential{
+		{},
+		{Revision: strings.Repeat("e", 40), SourceImage: sourceImage},
+	} {
+		if err := plugin.verifyStagedBinding("sample", invalid, false, "", io.Discard); err == nil || !strings.Contains(err.Error(), "invalid deployment binding") {
+			t.Fatalf("invalid stored binding returned unexpected result: %v", err)
+		}
+	}
+}
+
 func TestStageWaitsForInFlightRender(t *testing.T) {
 	root := t.TempDir()
 	revision := strings.Repeat("c", 40)

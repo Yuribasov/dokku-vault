@@ -32,6 +32,19 @@ func TestSecuritySensitiveValidation(t *testing.T) {
 			t.Errorf("unsafe image accepted: %q", image)
 		}
 	}
+	validSourceImage := "registry.example.test:5000/team/sample:build-42@sha256:" + strings.Repeat("b", 64)
+	if err := validateSourceImage(validSourceImage); err != nil {
+		t.Fatalf("valid source image rejected: %v", err)
+	}
+	for _, image := range []string{
+		"registry.example.test/team/sample:latest",
+		"registry.example.test/team/sample@sha256:" + strings.Repeat("B", 64),
+		"registry.example.test/team/sample@sha256:short",
+	} {
+		if validateSourceImage(image) == nil {
+			t.Errorf("mutable or invalid source image accepted: %q", image)
+		}
+	}
 	for _, mount := range []string{"/", "/proc/1", "/sys", "/dev/shm", "relative", "/safe/../escape"} {
 		if validateMountPath(mount) == nil {
 			t.Errorf("unsafe mount accepted: %q", mount)

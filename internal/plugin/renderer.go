@@ -36,6 +36,14 @@ func (p *Plugin) commandRender(args []string, stdout, stderr io.Writer) error {
 }
 
 func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
+	return p.renderAppWithInvocation(app, false, "", stdout, stderr)
+}
+
+func (p *Plugin) renderAppForDeployment(app string, stdout, stderr io.Writer) error {
+	return p.renderAppWithInvocation(app, true, os.Getenv("DOKKU_BUILD_SOURCE"), stdout, stderr)
+}
+
+func (p *Plugin) renderAppWithInvocation(app string, deployment bool, deploymentSource string, stdout, stderr io.Writer) error {
 	if err := validateAppName(app); err != nil {
 		return err
 	}
@@ -83,15 +91,6 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 		}
 	}
 
-	revisionBytes, err := p.Runner.Output(CommandSpec{
-		Name: executableFromEnv("PLUGN_BIN", "plugn"),
-		Args: []string{"trigger", "git-revision", app},
-		Env:  commandEnvironment(), Stderr: stderr,
-	})
-	if err != nil {
-		return fmt.Errorf("read current Git revision: %w", err)
-	}
-	revision := strings.TrimSpace(string(revisionBytes))
 	credential, token, err := p.consumePending(app)
 	if err != nil {
 		return err
@@ -99,8 +98,8 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 	if time.Now().After(credential.ExpiresAt) {
 		return fmt.Errorf("staged credential expired at %s", credential.ExpiresAt.Format(time.RFC3339))
 	}
-	if revision != credential.Revision {
-		return fmt.Errorf("staged revision %s does not match current revision %s", credential.Revision, revision)
+	if err := p.verifyStagedBinding(app, credential, deployment, deploymentSource, stderr); err != nil {
+		return err
 	}
 
 	work, err := os.MkdirTemp(p.State.tempRoot(), app+"-render-*")
@@ -207,6 +206,43 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "-----> Published %d rendered file(s) for %s\n", len(outputs), app)
 	return nil
+}
+
+func (p *Plugin) verifyStagedBinding(app string, credential StagedCredential, deployment bool, deploymentSource string, stderr io.Writer) error {
+	if credential.Revision != "" && credential.SourceImage == "" {
+		revisionBytes, err := p.Runner.Output(CommandSpec{
+			Name: executableFromEnv("PLUGN_BIN", "plugn"),
+			Args: []string{"trigger", "git-revision", app},
+			Env:  commandEnvironment(), Stderr: stderr,
+		})
+		if err != nil {
+			return fmt.Errorf("read current Git revision: %w", err)
+		}
+		revision := strings.TrimSpace(string(revisionBytes))
+		if revision != credential.Revision {
+			return fmt.Errorf("staged revision %s does not match current revision %s", credential.Revision, revision)
+		}
+		return nil
+	}
+	if credential.SourceImage != "" && credential.Revision == "" {
+		if deployment && deploymentSource != "git:from-image" && deploymentSource != "git:load-image" {
+			return fmt.Errorf("source-image credential requires git:from-image or git:load-image deployment (current source: %s)", valueOrNone(deploymentSource))
+		}
+		imageBytes, err := p.Runner.Output(CommandSpec{
+			Name: executableFromEnv("PLUGN_BIN", "plugn"),
+			Args: []string{"trigger", "git-get-property", app, "source-image"},
+			Env:  commandEnvironment(), Stderr: stderr,
+		})
+		if err != nil {
+			return fmt.Errorf("read current source image: %w", err)
+		}
+		image := strings.TrimSpace(string(imageBytes))
+		if image != credential.SourceImage {
+			return fmt.Errorf("staged source image %s does not match current source image %s", credential.SourceImage, valueOrNone(image))
+		}
+		return nil
+	}
+	return fmt.Errorf("staged credential has invalid deployment binding")
 }
 
 func (p *Plugin) consumePending(app string) (StagedCredential, string, error) {

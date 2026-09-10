@@ -14,6 +14,7 @@ var (
 	templateNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 	revisionPattern     = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 	imagePattern        = regexp.MustCompile(`^hashicorp/vault:[A-Za-z0-9][A-Za-z0-9._-]*@sha256:[0-9a-f]{64}$`)
+	sourceImagePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}$`)
 	tokenPattern        = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	appRoleMountPattern = regexp.MustCompile(`^auth/[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$`)
 	roleNamePattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -48,6 +49,13 @@ func validateVaultAddress(value string) error {
 func validateImage(image string) error {
 	if !imagePattern.MatchString(image) {
 		return fmt.Errorf("image must be hashicorp/vault:<tag>@sha256:<64 lowercase hex digest>")
+	}
+	return nil
+}
+
+func validateSourceImage(image string) error {
+	if len(image) > 1024 || !sourceImagePattern.MatchString(image) {
+		return fmt.Errorf("source image must be an immutable IMAGE@sha256:<64 lowercase hex digest> reference")
 	}
 	return nil
 }

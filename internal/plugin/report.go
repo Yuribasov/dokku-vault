@@ -64,7 +64,14 @@ func (p *Plugin) commandReport(args []string, stdout io.Writer) error {
 		if _, err := os.Stat(p.State.PendingTokenPath(app)); err != nil {
 			status = "incomplete"
 		}
-		fmt.Fprintf(stdout, "Pending credential: %s\nExpected revision: %s\nExpires at: %s\n", status, pending.Revision, pending.ExpiresAt.Format(time.RFC3339))
+		fmt.Fprintf(stdout, "Pending credential: %s\n", status)
+		if pending.Revision != "" {
+			fmt.Fprintf(stdout, "Expected revision: %s\n", pending.Revision)
+		}
+		if pending.SourceImage != "" {
+			fmt.Fprintf(stdout, "Expected source image: %s\n", pending.SourceImage)
+		}
+		fmt.Fprintf(stdout, "Expires at: %s\n", pending.ExpiresAt.Format(time.RFC3339))
 	} else if isNotExist(err) {
 		fmt.Fprintln(stdout, "Pending credential: none")
 	} else {

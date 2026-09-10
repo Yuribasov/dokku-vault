@@ -10,7 +10,7 @@ import (
 
 func (p *Plugin) commandStage(args []string, stdin io.Reader) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: vault-agent:stage APP --revision FULL_SHA --ttl-seconds N")
+		return fmt.Errorf("usage: vault-agent:stage APP (--revision FULL_SHA | --source-image IMAGE@sha256:DIGEST) --ttl-seconds N")
 	}
 	app := args[0]
 	if err := validateAppName(app); err != nil {
@@ -23,15 +23,21 @@ func (p *Plugin) commandStage(args []string, stdin io.Reader) error {
 	if len(booleans) != 0 {
 		return fmt.Errorf("--replace is not valid for stage")
 	}
-	if err := rejectUnknownFlags(flags, "revision", "ttl-seconds"); err != nil {
+	if err := rejectUnknownFlags(flags, "revision", "source-image", "ttl-seconds"); err != nil {
 		return err
 	}
-	revision, err := requireFlag(flags, "revision")
-	if err != nil {
-		return err
+	revision := flags["revision"]
+	sourceImage := flags["source-image"]
+	if (revision == "") == (sourceImage == "") {
+		return fmt.Errorf("exactly one of --revision or --source-image is required")
 	}
-	if !revisionPattern.MatchString(revision) {
+	if revision != "" && !revisionPattern.MatchString(revision) {
 		return fmt.Errorf("revision must be a full 40- or 64-character lowercase hexadecimal SHA")
+	}
+	if sourceImage != "" {
+		if err := validateSourceImage(sourceImage); err != nil {
+			return err
+		}
 	}
 	ttlValue, err := requireFlag(flags, "ttl-seconds")
 	if err != nil {
@@ -65,7 +71,10 @@ func (p *Plugin) commandStage(args []string, stdin io.Reader) error {
 		return err
 	}
 	now := time.Now().UTC()
-	metadata := StagedCredential{Revision: revision, StagedAt: now, ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}
+	metadata := StagedCredential{
+		Revision: revision, SourceImage: sourceImage,
+		StagedAt: now, ExpiresAt: now.Add(time.Duration(ttl) * time.Second),
+	}
 	if err := writeJSONAtomic(p.State.PendingMetadataPath(app), metadata, 0600); err != nil {
 		_ = secureRemove(p.State.PendingTokenPath(app))
 		return err

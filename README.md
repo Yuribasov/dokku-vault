@@ -19,7 +19,7 @@ This project has unit tests, including a simulated release render, but has not y
 - A reachable Vault server over HTTPS. Plain HTTP Vault addresses are rejected.
 - One AppRole and one least-privilege Vault policy per Dokku application.
 - CI credentials that can create only response-wrapped SecretIDs for the corresponding AppRole.
-- `make` on the Dokku host. Go 1.25.13 or newer is optional; installation falls back to a pinned official Go builder image when host Go is missing or older.
+- Go 1.25.13 or newer is optional; installation falls back to a pinned official Go builder image when host Go is missing or older. The installation path does not require `make`.
 
 The plugin stores state under `/var/lib/dokku/data/vault-agent`. Application secret storage is mounted read-only in Dokku's `deploy` and `run` phases.
 
@@ -27,10 +27,10 @@ The plugin stores state under `/var/lib/dokku/data/vault-agent`. Application sec
 
 1. An operator configures the Vault URL, digest-pinned Vault image, app mount, RoleID, and templates.
 2. CI creates a response-wrapped, one-use AppRole SecretID.
-3. CI sends only the wrapping token over SSH stdin to `vault-agent:stage`, bound to the full Git SHA and a local TTL.
-4. The ordinary Git push builds the application image.
+3. CI sends only the wrapping token over SSH stdin to `vault-agent:stage`, bound to either the full Git SHA or an immutable application source-image digest, plus a local TTL.
+4. A Git push or `git:from-image` operation builds the Dokku release.
 5. Dokku invokes the plugin's `pre-release-builder` hook.
-6. The plugin locks the app, compares Dokku's Git revision, and consumes the staged token.
+6. The plugin locks the app, verifies the staged Git revision or source image against Dokku's current deployment, and consumes the staged token.
 7. A one-shot Vault Agent container unwraps the SecretID, authenticates, renders all files, and exits.
 8. The plugin validates regular-file type, non-empty content, paths, and modes, builds a complete immutable generation, and atomically switches the named-storage path to it.
 9. New containers mount the new generation while already-running containers retain their previous bind-mounted generation.
@@ -41,6 +41,7 @@ Any failure aborts the new Dokku release. Per-file publication never changes the
 The installed `pre-release-builder` wrapper preserves every renderer failure as
 a non-zero hook status and prints an explicit deployment-aborted message. A
 missing RoleID therefore stops the release before Dokku schedules new containers.
+Revision and source-image mismatches fail through the same hook boundary.
 
 A staged credential is single-attempt. A retry requires a newly wrapped SecretID.
 
@@ -267,7 +268,9 @@ path "auth/approle/role/myapp/secret-id" {
 
 Use a distinct broker policy and AppRole endpoint per Dokku application.
 
-## CI deployment sequence
+## CI deployment sequences
+
+### Git push
 
 Choose a TTL that covers the worst-case Git upload, Dokku queue, Docker build, and at least five minutes of buffer. The example requires `vault`, `jq`, `ssh`, and `git`:
 
@@ -301,6 +304,65 @@ git push "dokku@${DOKKU_HOST}:${APP}" HEAD:master
 The Git push returns non-zero when pre-release validation fails. Deployment
 automation must propagate that status and must not mask it with `|| true`.
 
+### `git:from-image` and `git:load-image`
+
+Do not use the source repository commit with `git:from-image`. Dokku creates a
+new synthetic Git commit containing a generated Dockerfile, so that commit SHA
+does not exist until Dokku is already processing the deployment.
+
+Instead, pass the exact same digest-pinned application image to
+`vault-agent:stage --source-image` and `git:from-image`. Tags without a digest
+are rejected because they do not identify an immutable application artifact.
+
+```sh
+set -e
+set +x
+
+APP=myapp
+DOKKU_HOST=dokku.example.com
+SOURCE_IMAGE='registry.example.com/team/myapp:build-42@sha256:YOUR_64_HEX_IMAGE_DIGEST'
+TTL_SECONDS=2700
+
+WRAPPING_TOKEN=$(
+  vault write -format=json \
+    -wrap-ttl="${TTL_SECONDS}s" \
+    "auth/approle/role/${APP}/secret-id" \
+    "ttl=${TTL_SECONDS}s" |
+  jq -er '.wrap_info.token'
+)
+
+printf '%s\n' "$WRAPPING_TOKEN" |
+  ssh "dokku@${DOKKU_HOST}" \
+    vault-agent:stage "$APP" \
+    --source-image "$SOURCE_IMAGE" \
+    --ttl-seconds "$TTL_SECONDS"
+
+unset WRAPPING_TOKEN
+
+ssh "dokku@${DOKKU_HOST}" git:from-image "$APP" "$SOURCE_IMAGE"
+```
+
+`git:load-image` uses the same `--source-image` binding. The reference supplied
+to the stage command must exactly match the image argument supplied to Dokku,
+including the registry, optional tag, and lowercase `sha256` digest.
+
+### Deployment failure status
+
+Git push, `git:from-image`, and `git:load-image` must return non-zero when the
+Vault pre-release hook fails. An updated installation prints:
+
+```text
+vault-agent: <specific validation or rendering error>
+ !     Vault Agent pre-release validation failed; aborting deployment
+```
+
+If the second line is absent, update the plugin with
+`sudo dokku plugin:update vault-agent`. If it is present but CI still reports
+success, the SSH or CI wrapper is masking the remote command status. Run the
+deployment as a direct command under `set -e`; do not append `|| true`, and
+when piping through `tee`, enable `set -o pipefail` or inspect
+`${PIPESTATUS[0]}`.
+
 Keep shell tracing disabled for the entire wrapping and staging section. Never place a wrapping token or SecretID in:
 
 - command-line arguments;
@@ -320,7 +382,7 @@ Show global configuration:
 sudo dokku vault-agent:report
 ```
 
-Show sanitized app readiness, expected revision, and pending expiry:
+Show sanitized app readiness, expected revision or source image, and pending expiry:
 
 ```sh
 sudo dokku vault-agent:report myapp
@@ -340,7 +402,7 @@ To rotate a keystore, update Vault, stage a new wrapped SecretID, and perform a 
 
 Behavior of common Dokku operations:
 
-- `ps:rebuild` invokes the release hook and requires a new token bound to the existing full Git SHA.
+- `ps:rebuild` invokes the release hook and requires a new token bound to the existing full Dokku Git SHA, including after an earlier image deployment.
 - `ps:restart` does not invoke the release hook and does not consume a staged token. It mounts the latest complete generation currently selected by the plugin.
 - App rename preserves configuration and the storage association but discards any pending credential.
 - App clone removes the cloned Vault storage attachment and leaves the clone without Vault integration.
@@ -364,7 +426,7 @@ sudo dokku plugin:uninstall vault-agent
 
 ## Security properties and limitations
 
-- The response-wrapped token is accepted only on stdin, stored as `0600`, bound to a full 40- or 64-character lowercase Git SHA, and consumed before Vault Agent starts. Filesystem-level secure erasure is not guaranteed; use encrypted host storage when that matters.
+- The response-wrapped token is accepted only on stdin, stored as `0600`, and bound to either a full 40- or 64-character lowercase Git SHA or the exact digest-pinned source image of a `git:from-image`/`git:load-image` deployment. It is consumed before Vault Agent starts. Filesystem-level secure erasure is not guaranteed; use encrypted host storage when that matters.
 - The token is never passed in Docker argv or environment.
 - Vault Agent runs with a read-only root filesystem, all capabilities dropped, `no-new-privileges`, a private `/tmp`, no Docker socket, and the Dokku UID/GID.
 - The Vault image reference must be an immutable `hashicorp/vault` digest.

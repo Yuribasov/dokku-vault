@@ -6,7 +6,7 @@ Create a standalone `dokku-vault-agent` Go plugin targeting Dokku 0.38.25+ with 
 
 - Manage per-app secret storage and a configurable read-only container mount.
 - Accept a response-wrapped, single-use AppRole SecretID from CI over Dokku SSH stdin.
-- Bind each staged token to an exact Git commit.
+- Bind each staged token to either an exact Git commit or an immutable application source-image digest.
 - Run a pinned Vault Agent image during `pre-release-builder`.
 - Render and validate one or more files before allowing deployment.
 - Support either managed template mappings or validated custom template-only HCL.
@@ -48,10 +48,10 @@ Implement these public commands:
   - `--replace` explicitly removes existing managed mappings when switching modes.
 - `vault-agent:template:clear-custom APP`
   - Return the app to empty managed mode.
-- `vault-agent:stage APP --revision FULL_SHA --ttl-seconds N`
+- `vault-agent:stage APP (--revision FULL_SHA | --source-image IMAGE@sha256:DIGEST) --ttl-seconds N`
   - Read one wrapping token from stdin.
-  - Require a full 40- or 64-character hexadecimal Git SHA.
-  - Store token, revision, staging time, and local expiry under the app lock.
+  - Require either a full 40- or 64-character hexadecimal Git SHA or an immutable source-image reference, never both.
+  - Store the token, deployment binding, staging time, and local expiry under the app lock.
   - A new stage replaces and securely removes any older pending token.
 - `vault-agent:render APP`
   - Manually consume a staged token and run the same rendering path as deployment.
@@ -78,7 +78,8 @@ Use the documented `dokku storage:create|mount|unmount|destroy` CLI only from ex
   - Return immediately for apps without enabled integration.
   - Acquire an app-specific file lock.
   - Require complete global/app configuration and a non-expired staged token.
-  - Read Dokku's current `git-revision` and compare it exactly with the staged SHA.
+  - For Git deployments, read Dokku's current `git-revision` and compare it exactly with the staged SHA.
+  - For `git:from-image` and `git:load-image`, require Dokku's matching build-source marker and compare its `source-image` property exactly with the staged digest-pinned reference.
   - Atomically consume the pending token before invoking Vault; every attempt requires a new token.
   - Bound execution by the earlier of five minutes or staged-token expiry and force-remove a timed-out named Agent container.
 - Generate a protected temporary Agent configuration containing:
@@ -102,7 +103,7 @@ Use the documented `dokku storage:create|mount|unmount|destroy` CLI only from ex
   - Build a complete immutable generation without modifying the live file set.
   - Atomically replace a relative live symlink so future containers mount the new generation while existing bind mounts retain the prior generation.
   - Promote on `post-deploy`, retaining the current and immediately previous successful generations and removing older/failed generations.
-- Any validation, Agent, revision, or token failure returns non-zero and aborts the Dokku release. Clean up temporary credentials and rendered staging files on every path.
+- Any validation, Agent, revision, source-image, or token failure returns non-zero and aborts the Dokku release. Clean up temporary credentials and rendered staging files on every path.
 - `ps:rebuild` follows the full build/release path and therefore requires a newly staged token bound to the existing SHA.
 - `ps:restart` does not run the release hook and does not rerender or consume a token.
 - A successful render followed by a later Dokku scheduling failure leaves a complete pending generation selected for future mounts; already-running containers retain their prior bind-mounted generation. The next render still requires a new wrapped SecretID.
@@ -131,10 +132,10 @@ Give CI a separate broker policy that can only update the exact AppRole SecretID
 
 Document the deployment sequence:
 
-1. Determine the full source SHA.
+1. Determine the full source SHA for Git push, or the immutable application image reference for `git:from-image`/`git:load-image`.
 2. Generate a response-wrapped SecretID with wrapping and SecretID TTL equal to measured worst-case build time plus five minutes.
-3. Pipe the wrapping token to `ssh dokku@host vault-agent:stage APP --revision SHA --ttl-seconds N`.
-4. Perform the normal Git push.
+3. Pipe the wrapping token to `ssh dokku@host vault-agent:stage APP --revision SHA --ttl-seconds N`, or use `--source-image IMAGE@sha256:DIGEST` for an image deployment.
+4. Perform the matching Git push or image deployment.
 5. Treat any failed deployment as consuming the credential; generate a new wrapped SecretID before retrying.
 
 Ensure examples disable shell tracing around token handling and never place the token in argv, Dokku config, app environment, or CI logs.
@@ -146,7 +147,7 @@ Ensure examples disable shell tracing around token handling and never place the 
 - Command validation, state permissions, atomic writes, app-name/storage-name generation, mount-path restrictions, and sanitized reports.
 - Managed HCL escaping, multiple mappings, decoding modes, destination collisions, and mode validation.
 - Custom HCL acceptance and rejection for every forbidden block, attribute, and path.
-- Token staging, replacement, expiry, replay prevention, SHA mismatch, and unconditional cleanup.
+- Token staging, replacement, expiry, replay prevention, SHA/source-image mismatch, mutually exclusive bindings, and unconditional cleanup.
 - Docker argument construction proves no token appears in argv/environment and all hardening flags are present.
 - Storage CLI adapter clears inherited routing, uses `scheduler-detect`, and records failed rollback for retry.
 - Stable app/global locking serializes renders, staging, configuration, rename, and cleanup.
@@ -163,6 +164,7 @@ Use Dokku 0.38.25+ docker-local and a real Vault development instance:
 - Render multiple managed files from one AppRole and deploy successfully.
 - Render equivalent files through custom HCL.
 - Rotate Vault data, stage a new wrapped SecretID, and verify a new deploy publishes updated files.
+- Deploy a digest-pinned application image through `git:from-image` and `git:load-image`, and reject mutable, mismatched, or wrong-deployment-source image bindings.
 - Verify `ps:rebuild` consumes a fresh token with the same SHA.
 - Verify `ps:restart` neither renders nor consumes a staged token.
 - Confirm missing, expired, replayed, wrong-path, wrong-revision, and already-unwrapped tokens abort deployment while the previous app remains active.

@@ -44,7 +44,8 @@ type AppConfig struct {
 }
 
 type StagedCredential struct {
-	Revision  string    `json:"revision"`
-	StagedAt  time.Time `json:"staged_at"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Revision    string    `json:"revision,omitempty"`
+	SourceImage string    `json:"source_image,omitempty"`
+	StagedAt    time.Time `json:"staged_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
 }

@@ -17,7 +17,7 @@ func (p *Plugin) triggerPreReleaseBuilder(args []string, stdout, stderr io.Write
 		}
 		return err
 	}
-	return p.renderApp(app, stdout, stderr)
+	return p.renderAppForDeployment(app, stdout, stderr)
 }
 
 func (p *Plugin) triggerPreDelete(args []string, stdout, stderr io.Writer) error {
