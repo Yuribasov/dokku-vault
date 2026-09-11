@@ -1,5 +1,5 @@
 [plugin]
 description = "Render Vault secrets before Dokku releases by running a one-shot Vault Agent container"
-version = "0.2.0"
+version = "0.2.1"
 
 [plugin.config]

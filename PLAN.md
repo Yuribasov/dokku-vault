@@ -79,7 +79,7 @@ Use the documented `dokku storage:create|mount|unmount|destroy` CLI only from ex
   - Acquire an app-specific file lock.
   - Require complete global/app configuration and a non-expired staged token.
   - For Git deployments, read Dokku's current `git-revision` and compare it exactly with the staged SHA.
-  - For `git:from-image` and `git:load-image`, require Dokku's matching build-source marker and compare its `source-image` property exactly with the staged digest-pinned reference.
+  - For `git:from-image`, `git:load-image`, and image-origin `ps:rebuild`, require Dokku's matching build-source marker and compare its retained `source-image` property exactly with the staged digest-pinned reference.
   - Atomically consume the pending token before invoking Vault; every attempt requires a new token.
   - Bound execution by the earlier of five minutes or staged-token expiry and force-remove a timed-out named Agent container.
 - Generate a protected temporary Agent configuration containing:
@@ -104,7 +104,7 @@ Use the documented `dokku storage:create|mount|unmount|destroy` CLI only from ex
   - Atomically replace a relative live symlink so future containers mount the new generation while existing bind mounts retain the prior generation.
   - Promote on `post-deploy`, retaining the current and immediately previous successful generations and removing older/failed generations.
 - Any validation, Agent, revision, source-image, or token failure returns non-zero and aborts the Dokku release. Clean up temporary credentials and rendered staging files on every path.
-- `ps:rebuild` follows the full build/release path and therefore requires a newly staged token bound to the existing SHA.
+- `ps:rebuild` follows the full build/release path and therefore requires a newly staged token: revision-bound for Git-origin apps and source-image-bound for image-origin apps.
 - `ps:restart` does not run the release hook and does not rerender or consume a token.
 - A successful render followed by a later Dokku scheduling failure leaves a complete pending generation selected for future mounts; already-running containers retain their prior bind-mounted generation. The next render still requires a new wrapped SecretID.
 
@@ -132,10 +132,10 @@ Give CI a separate broker policy that can only update the exact AppRole SecretID
 
 Document the deployment sequence:
 
-1. Determine the full source SHA for Git push, or the immutable application image reference for `git:from-image`/`git:load-image`.
+1. Determine the full source SHA for Git push and Git-origin rebuilds, or the immutable application image reference for `git:from-image`/`git:load-image` and image-origin rebuilds.
 2. Generate a response-wrapped SecretID with wrapping and SecretID TTL equal to measured worst-case build time plus five minutes.
-3. Pipe the wrapping token to `ssh dokku@host vault-agent:stage APP --revision SHA --ttl-seconds N`, or use `--source-image IMAGE@sha256:DIGEST` for an image deployment.
-4. Perform the matching Git push or image deployment.
+3. Pipe the wrapping token to `ssh dokku@host vault-agent:stage APP --revision SHA --ttl-seconds N`, or use `--source-image IMAGE@sha256:DIGEST` for an image deployment or image-origin rebuild.
+4. Perform the matching Git push, image deployment, or rebuild.
 5. Treat any failed deployment as consuming the credential; generate a new wrapped SecretID before retrying.
 
 Ensure examples disable shell tracing around token handling and never place the token in argv, Dokku config, app environment, or CI logs.
@@ -167,7 +167,7 @@ Use Dokku 0.38.25+ docker-local and a real Vault development instance:
 - Render equivalent files through custom HCL.
 - Rotate Vault data, stage a new wrapped SecretID, and verify a new deploy publishes updated files.
 - Deploy a digest-pinned application image through `git:from-image` and `git:load-image`, and reject mutable, mismatched, or wrong-deployment-source image bindings.
-- Verify `ps:rebuild` consumes a fresh token with the same SHA.
+- Verify `ps:rebuild` consumes a fresh token bound to the Git SHA or retained immutable source image, according to the app's deployment origin.
 - Verify `ps:restart` neither renders nor consumes a staged token.
 - Confirm missing, expired, replayed, wrong-path, wrong-revision, and already-unwrapped tokens abort deployment while the previous app remains active.
 - Confirm disable and app destruction remove storage, rendered files, staged credentials, and configuration.

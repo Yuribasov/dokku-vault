@@ -42,7 +42,9 @@ func (p *Plugin) renderApp(app string, stdout, stderr io.Writer) error {
 func (p *Plugin) renderAppForDeployment(app string, stdout, stderr io.Writer) error {
 	// Dokku's build-capture setup exports this before invoking nested release
 	// triggers. Keep it separate from the persisted source-image property so a
-	// stale image value cannot authorize a Git or ps:rebuild deployment.
+	// stale image value cannot authorize a Git deployment. Dokku clears that
+	// property when an app moves away from image-based deployment, so its exact
+	// match remains the stable identity for an image-origin ps:rebuild.
 	return p.renderAppWithInvocation(app, true, os.Getenv("DOKKU_BUILD_SOURCE"), stdout, stderr)
 }
 
@@ -237,8 +239,8 @@ func (p *Plugin) verifyStagedBinding(app string, credential StagedCredential, de
 		return nil
 	}
 	if credential.SourceImage != "" && credential.Revision == "" {
-		if deployment && deploymentSource != "git:from-image" && deploymentSource != "git:load-image" {
-			return fmt.Errorf("source-image credential requires git:from-image or git:load-image deployment (current source: %s)", valueOrNone(deploymentSource))
+		if deployment && !allowsSourceImageBinding(deploymentSource) {
+			return fmt.Errorf("source-image credential requires git:from-image, git:load-image, or an image-origin ps:rebuild deployment (current source: %s)", valueOrNone(deploymentSource))
 		}
 		imageBytes, err := p.Runner.Output(CommandSpec{
 			Name: executableFromEnv("PLUGN_BIN", "plugn"),
@@ -255,6 +257,15 @@ func (p *Plugin) verifyStagedBinding(app string, credential StagedCredential, de
 		return nil
 	}
 	return fmt.Errorf("staged credential has invalid deployment binding")
+}
+
+func allowsSourceImageBinding(deploymentSource string) bool {
+	switch deploymentSource {
+	case "git:from-image", "git:load-image", "ps:rebuild":
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *Plugin) consumePending(app string) (StagedCredential, string, error) {

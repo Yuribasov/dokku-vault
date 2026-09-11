@@ -8,6 +8,7 @@ The complete implementation and the full-review repair series are committed. It 
 - digest-pinned one-shot Vault Agent rendering with explicit non-zero failure propagation from `pre-release-builder`;
 - per-app named read-only storage for `docker-local`;
 - response-wrapped credential staging over stdin, exact Git revision or immutable source-image binding, TTL checks, and one-attempt consumption;
+- stable source-image binding for `ps:rebuild` of image-origin applications instead of Dokku's synthetic Git revision;
 - managed multi-file KV v2 templates and validated custom template-only HCL;
 - output validation, symlink/traversal defenses, immutable generation publication, and an atomic live symlink switch;
 - stable per-app and global locks covering render, staging, configuration, templates, rename, disable, and cleanup;
@@ -43,7 +44,7 @@ tests/uninstall_test.sh
 git diff --check
 ```
 
-The suite includes a fake end-to-end release render, Git and source-image deployment binding through the real pre-release entry point, concurrent stage/render locking, exact storage attachment cleanup, cleanup failure and retry, rollback tombstones, atomic multi-file generation switching, legacy-directory migration during post-deploy, restrictive-umask handling, orphan-token cleanup, timeout cleanup, root-to-Dokku ownership migration, rename failure safety, partial-install uninstall handling, and uninstall refusal. It confirms the wrapping token is absent from Docker argv, validates hardening flags, consumes the credential, and rejects replay.
+The suite includes a fake end-to-end release render, Git and source-image deployment binding through the real pre-release entry point, image-origin `ps:rebuild`, concurrent stage/render locking, exact storage attachment cleanup, cleanup failure and retry, rollback tombstones, atomic multi-file generation switching, legacy-directory migration during post-deploy, restrictive-umask handling, orphan-token cleanup, timeout cleanup, root-to-Dokku ownership migration, rename failure safety, partial-install uninstall handling, and uninstall refusal. It confirms the wrapping token is absent from Docker argv, validates hardening flags, consumes the credential, and rejects replay.
 
 A source-only Claude Opus review was completed after commit `739cc35`.
 Confirmed findings were repaired and regression-tested. The suggested
@@ -60,7 +61,7 @@ No real Dokku/Vault integration environment was available in this workspace. Bef
 1. Install on a disposable Dokku 0.38.25+ `docker-local` host.
 2. Exercise the complete CI wrapping, SSH staging, Git push, and release path against a non-development Vault.
 3. Verify Dokku plugin installation and update through both host-Go and container-builder paths.
-4. Test missing, expired, replayed, wrong-revision, wrong-source-image, and already-unwrapped credentials across Git push and `git:from-image`.
+4. Test missing, expired, replayed, wrong-revision, wrong-source-image, and already-unwrapped credentials across Git push, `git:from-image`, and image-origin `ps:rebuild`.
 5. Test app rename, clone, destruction, cleanup retry, plugin uninstall refusal, `ps:restart`, and `ps:rebuild`.
 6. Confirm file readability with the exact UID/GID used by both Java images.
 7. Test amd64 and arm64 hosts.

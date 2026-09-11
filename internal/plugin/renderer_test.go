@@ -288,8 +288,11 @@ func TestVerifySourceImageBindingForImageDeployment(t *testing.T) {
 	if err := plugin.verifyStagedBinding("sample", credential, true, "git:load-image", io.Discard); err != nil {
 		t.Fatalf("matching git:load-image binding failed: %v", err)
 	}
+	if err := plugin.verifyStagedBinding("sample", credential, true, "ps:rebuild", io.Discard); err != nil {
+		t.Fatalf("matching image-origin ps:rebuild binding failed: %v", err)
+	}
 	err := plugin.verifyStagedBinding("sample", credential, true, "git-hook", io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "requires git:from-image or git:load-image") {
+	if err == nil || !strings.Contains(err.Error(), "requires git:from-image, git:load-image, or an image-origin ps:rebuild") {
 		t.Fatalf("source-image credential accepted for Git deployment: %v", err)
 	}
 	currentImage = "registry.example.test/team/sample@sha256:" + strings.Repeat("d", 64)

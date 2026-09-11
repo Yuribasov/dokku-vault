@@ -72,19 +72,23 @@ func TestPreReleaseBuilderUsesDokkuBuildSourceForImageBinding(t *testing.T) {
 	if err := writeFileAtomic(plugin.State.RoleIDPath("sample"), []byte("role-id\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := plugin.commandStage(
-		[]string{"sample", "--source-image", sourceImage, "--ttl-seconds", "300"},
-		strings.NewReader("wrapped-token\n"),
-	); err != nil {
-		t.Fatal(err)
-	}
-	if current, err := user.Current(); err == nil {
-		t.Setenv("DOKKU_SYSTEM_USER", current.Username)
-	}
-	t.Setenv("DOKKU_BUILD_SOURCE", "git:from-image")
-	err := plugin.triggerPreReleaseBuilder([]string{"dockerfile", "sample", "sample-image"}, io.Discard, io.Discard)
-	if !errors.Is(err, renderStop) {
-		t.Fatalf("image-bound pre-release returned %v, want render sentinel", err)
+	for _, deploymentSource := range []string{"git:from-image", "ps:rebuild"} {
+		t.Run(deploymentSource, func(t *testing.T) {
+			if err := plugin.commandStage(
+				[]string{"sample", "--source-image", sourceImage, "--ttl-seconds", "300"},
+				strings.NewReader("wrapped-token\n"),
+			); err != nil {
+				t.Fatal(err)
+			}
+			if current, err := user.Current(); err == nil {
+				t.Setenv("DOKKU_SYSTEM_USER", current.Username)
+			}
+			t.Setenv("DOKKU_BUILD_SOURCE", deploymentSource)
+			err := plugin.triggerPreReleaseBuilder([]string{"dockerfile", "sample", "sample-image"}, io.Discard, io.Discard)
+			if !errors.Is(err, renderStop) {
+				t.Fatalf("image-bound pre-release returned %v, want render sentinel", err)
+			}
+		})
 	}
 }
 

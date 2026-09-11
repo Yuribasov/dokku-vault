@@ -304,7 +304,7 @@ git push "dokku@${DOKKU_HOST}:${APP}" HEAD:master
 The Git push returns non-zero when pre-release validation fails. Deployment
 automation must propagate that status and must not mask it with `|| true`.
 
-### `git:from-image` and `git:load-image`
+### `git:from-image`, `git:load-image`, and image-origin rebuilds
 
 Do not use the source repository commit with `git:from-image`. Dokku creates a
 new synthetic Git commit containing a generated Dockerfile, so that commit SHA
@@ -346,10 +346,36 @@ ssh "dokku@${DOKKU_HOST}" git:from-image "$APP" "$SOURCE_IMAGE"
 to the stage command must exactly match the image argument supplied to Dokku,
 including the registry, optional tag, and lowercase `sha256` digest.
 
+Use that same source-image binding when rebuilding an app whose source was last
+set by `git:from-image` or `git:load-image`. Do not bind an image-origin
+`ps:rebuild` to `GIT_REV`: Dokku's generated repository revision is an
+implementation detail and is not a stable identity for this operation.
+
+Retrieve the exact persisted image reference, create a fresh wrapped SecretID,
+and then stage and rebuild:
+
+```sh
+SOURCE_IMAGE=$(ssh "dokku@${DOKKU_HOST}" git:report "$APP" --git-source-image)
+
+printf '%s\n' "$WRAPPING_TOKEN" |
+  ssh "dokku@${DOKKU_HOST}" \
+    vault-agent:stage "$APP" \
+    --source-image "$SOURCE_IMAGE" \
+    --ttl-seconds "$TTL_SECONDS"
+
+unset WRAPPING_TOKEN
+
+ssh "dokku@${DOKKU_HOST}" ps:rebuild "$APP"
+```
+
+The plugin accepts this only when Dokku still reports the exact matching
+digest-pinned `source-image`. Dokku clears that property after a later non-image
+deployment, so a Git-origin rebuild must instead use `--revision`.
+
 ### Deployment failure status
 
-Git push, `git:from-image`, and `git:load-image` must return non-zero when the
-Vault pre-release hook fails. An updated installation prints:
+Git push, `git:from-image`, `git:load-image`, and `ps:rebuild` must return
+non-zero when the Vault pre-release hook fails. An updated installation prints:
 
 ```text
 vault-agent: <specific validation or rendering error>
@@ -407,7 +433,7 @@ To rotate a keystore, update Vault, stage a new wrapped SecretID, and perform a 
 
 Behavior of common Dokku operations:
 
-- `ps:rebuild` invokes the release hook and requires a new token bound to the existing full Dokku Git SHA, including after an earlier image deployment.
+- `ps:rebuild` invokes the release hook and requires a new token. Bind Git-origin apps to their full Git SHA; bind image-origin apps to the exact digest-pinned source image retained by Dokku.
 - `ps:restart` does not invoke the release hook and does not consume a staged token. It mounts the latest complete generation currently selected by the plugin.
 - App rename preserves configuration and the storage association but discards any pending credential.
 - App clone removes the cloned Vault storage attachment and leaves the clone without Vault integration.
@@ -431,7 +457,7 @@ sudo dokku plugin:uninstall vault-agent
 
 ## Security properties and limitations
 
-- The response-wrapped token is accepted only on stdin, stored as `0600`, and bound to either a full 40- or 64-character lowercase Git SHA or the exact digest-pinned source image of a `git:from-image`/`git:load-image` deployment. It is consumed before Vault Agent starts. Filesystem-level secure erasure is not guaranteed; use encrypted host storage when that matters.
+- The response-wrapped token is accepted only on stdin, stored as `0600`, and bound to either a full 40- or 64-character lowercase Git SHA or the exact digest-pinned source image of a `git:from-image`/`git:load-image` deployment and its later rebuilds. It is consumed before Vault Agent starts. Filesystem-level secure erasure is not guaranteed; use encrypted host storage when that matters.
 - The token is never passed in Docker argv or environment.
 - Vault Agent runs with a read-only root filesystem, all capabilities dropped, `no-new-privileges`, a private `/tmp`, no Docker socket, and the Dokku UID/GID.
 - The Vault image reference must be an immutable `hashicorp/vault` digest.
